@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+node_modules/
+lab/snmpdata/.growth_t0
+.DS_Store
+Thumbs.db

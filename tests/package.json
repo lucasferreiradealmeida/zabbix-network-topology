@@ -1,0 +1,8 @@
+{
+  "name": "nettopo-tests",
+  "private": true,
+  "description": "Development tests of the Network Topology Zabbix module",
+  "devDependencies": {
+    "acorn": "^8.14.0"
+  }
+}

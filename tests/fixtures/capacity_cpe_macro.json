@@ -1,0 +1,5 @@
+{
+	"{$CAPACITY.SEGMENT}": "cpe",
+	"{$CIRCUIT_ID}": "net-to-0042",
+	"{$CIRCUIT_ID.IF}": "xgigabitethernet0/0/5, GigabitEthernet0/1/*"
+}

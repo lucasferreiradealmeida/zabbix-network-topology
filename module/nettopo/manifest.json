@@ -1,0 +1,54 @@
+{
+	"manifest_version": 2.0,
+	"id": "nettopo",
+	"type": "module",
+	"name": "Network Topology",
+	"namespace": "NetTopo",
+	"version": "1.4.0",
+	"author": "Lucas Ferreira de Almeida",
+	"url": "",
+	"description": "Network topology map built from LLDP/CDP neighbors, host tags, map links and trigger dependencies, colored by problem severity and link status. Saved standard maps with drawings and curved links, published as native Zabbix maps. Capacity planning by circuit (CIRCUIT_ID): overview by risk, load of each segment and bottleneck, recommended upgrades with simulation, chain map colored by utilization.",
+	"actions": {
+		"nettopo.view": {
+			"class": "TopologyView",
+			"view": "nettopo.view",
+			"layout": "layout.htmlpage"
+		},
+		"nettopo.data": {
+			"class": "TopologyData",
+			"layout": "layout.json"
+		},
+		"nettopo.map": {
+			"class": "TopologyMap",
+			"layout": "layout.json"
+		},
+		"nettopo.settings": {
+			"class": "TopologySettings",
+			"view": "nettopo.settings",
+			"layout": "layout.htmlpage"
+		},
+		"nettopo.settings.update": {
+			"class": "TopologySettingsUpdate"
+		},
+		"nettopo.lib": {
+			"class": "TopologyLib",
+			"layout": "layout.json"
+		},
+		"nettopo.capacity": {
+			"class": "CapacityView",
+			"view": "nettopo.capacity",
+			"layout": "layout.htmlpage"
+		},
+		"nettopo.capacity.dashboard": {
+			"class": "CapacityDashboard"
+		}
+	},
+	"config": {
+		"max_hosts": 2000,
+		"editors": {
+			"user_type": 2,
+			"usrgrpids": []
+		},
+		"maps": {}
+	}
+}

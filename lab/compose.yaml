@@ -1,0 +1,89 @@
+# Network Topology lab: Zabbix 7.4 + PostgreSQL + SNMP simulator (LLDP/CDP devices).
+#
+#   docker compose up -d --build
+#   docker compose run --rm tools python setup_lab.py      (or: python3 setup_lab.py)
+#   open http://localhost:8080  (Admin / zabbix)  > Monitoring > Network topology
+#
+# The module (../module/nettopo) is copied into the web image: after changing or replacing it,
+# run "docker compose up -d --build" again.
+
+name: nettopo-lab
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix -d zabbix"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.4-latest
+    environment:
+      DB_SERVER_HOST: postgres
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+      ZBX_CACHEUPDATEFREQUENCY: 10
+      ZBX_STARTSNMPPOLLERS: 2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  zabbix-web:
+    build:
+      context: ../module
+      dockerfile: ../lab/web/Dockerfile
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: postgres
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+      ZBX_SERVER_NAME: Lab Topologia
+      PHP_TZ: America/Sao_Paulo
+    ports:
+      - "8080:8080"
+    # On Linux you may mount the module instead (edit -> reload, no rebuild):
+    # volumes:
+    #   - ../module/nettopo:/usr/share/zabbix/modules/nettopo:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
+    restart: unless-stopped
+
+  # SNMP v2c simulator: one device per data file in ./snmpdata (community = file name).
+  snmpsim:
+    build: ./snmpsim
+    volumes:
+      - ./snmpdata:/data:ro
+    restart: unless-stopped
+
+  # Lab scripts without installing Python on your machine:
+  #   docker compose run --rm tools python setup_lab.py
+  #   docker compose run --rm tools python network.py break   (or fix)
+  tools:
+    image: python:3.12-alpine
+    profiles: ["tools"]
+    working_dir: /pkg/lab
+    volumes:
+      - ..:/pkg
+    environment:
+      LAB_URL: http://zabbix-web:8080
+      LAB_PUBLIC_URL: http://localhost:8080
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+
+volumes:
+  pgdata:

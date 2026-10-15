@@ -1,0 +1,1119 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+  - uuid: d3b97f13b421415a96c42449a50c98a9
+    name: Templates/Capacity Planning
+  templates:
+  - uuid: 0d7e60befbe74f7ea9973d586d4e2ade
+    template: Template Capacity Planning
+    name: Template Capacity Planning
+    description: |
+      Capacity planning - camada 1 (template base). Não vincule este template direto: use um dos perfis
+      "Template Capacity Planning - Backbone", "- Distribuicao" ou "- CPE", que o incluem.
+
+      Descobre as interfaces cuja descrição (ifAlias) tem o identificador do circuito, por exemplo
+      "CID:NET-TO-0001" (vários circuitos: "CID:NET-TO-0001,NET-TO-0002"), ou uma palavra de enlace
+      compartilhado (UPLINK, TRONCO, TRUNK). Para cada uma coleta tráfego, capacidade, utilização, p95,
+      pico de 24h, média de 30 dias, crescimento mensal e a previsão de saturação, com as tags circuit,
+      segment, link, interface e alias. Os problemas trazem um link para o circuito no módulo.
+      O módulo "Network Topology" usa essas tags para montar o caminho de cada circuito e apontar o gargalo.
+
+      Opcional: com {$CAPACITY.NETBOX.URL} preenchido, interfaces sem CID na descrição buscam o CID
+      no NetBox (campo personalizado {$CAPACITY.NETBOX.FIELD} da interface ou a descrição dela).
+
+      Opcional: a macro de host {$CIRCUIT_ID} informa o circuito do equipamento inteiro (normalmente
+      o CPE). Ele vai para as interfaces listadas em {$CIRCUIT_ID.IF} (nomes separados por vírgula,
+      * vale qualquer coisa: ether1, GigabitEthernet0/0/0, sfp-sfpplus*). A tag cid_source mostra de
+      onde veio o CID de cada interface: descricao, netbox ou macro.
+    vendor:
+      name: nettopo
+      version: '1.4'
+    groups:
+    - name: Templates/Capacity Planning
+    items:
+    - uuid: a5833aedc6c5469f9137e47da996c3a1
+      name: 'Capacidade: interfaces (walk)'
+      type: SNMP_AGENT
+      snmp_oid: walk[1.3.6.1.2.1.31.1.1.1.1,1.3.6.1.2.1.31.1.1.1.18,1.3.6.1.2.1.31.1.1.1.15,1.3.6.1.2.1.2.2.1.2,1.3.6.1.2.1.1.5]
+      key: capacity.if.walk
+      delay: '{$CAPACITY.LLD.INTERVAL}'
+      history: '0'
+      value_type: TEXT
+      description: 'ifName, ifAlias, ifHighSpeed, ifDescr e sysName. Não é guardado: alimenta a descoberta.'
+      tags:
+      - tag: component
+        value: capacity
+    - uuid: f039b94a65a144958e870a0a9e743c25
+      name: 'Capacidade: papel do equipamento'
+      type: DEPENDENT
+      key: capacity.segment
+      delay: '0'
+      history: 7d
+      value_type: CHAR
+      inventory_link: TYPE
+      description: Backbone, Distribuição ou CPE ({$CAPACITY.SEGMENT}, definido pelo template de perfil). Também preenche o campo "Tipo" do inventário (inventário em modo automático).
+      preprocessing:
+      - type: JAVASCRIPT
+        parameters:
+        - |
+          // Role of the device for capacity planning; also written to the host inventory field "Type".
+          var v = String('{$CAPACITY.SEGMENT}').toLowerCase()
+              .replace(/[à-å]/g, 'a').replace(/ç/g, 'c').replace(/[è-ë]/g, 'e')
+              .replace(/[ì-ï]/g, 'i').replace(/[ò-ö]/g, 'o').replace(/[ù-ü]/g, 'u');
+
+          if (/^(backbone|core|nucleo)$/.test(v)) {
+              return 'Backbone';
+          }
+          if (/^(distribuicao|distribution|metro|agregacao|aggregation)$/.test(v)) {
+              return 'Distribuição';
+          }
+          if (/^(cpe|acesso|access|cliente|customer)$/.test(v)) {
+              return 'CPE';
+          }
+
+          return 'Indefinido';
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1d
+      master_item:
+        key: capacity.if.walk
+      tags:
+      - tag: component
+        value: capacity
+    discovery_rules:
+    - uuid: 92da288818654bd4804d4f3bb8cae43f
+      name: 'Capacidade: interfaces de circuitos'
+      type: DEPENDENT
+      key: capacity.if.discovery
+      delay: '0'
+      lifetime_type: DELETE_AFTER
+      lifetime: '{$CAPACITY.LOST.KEEP}'
+      enabled_lifetime_type: DISABLE_NEVER
+      description: Uma entidade por interface com CID ou palavra de enlace compartilhado na descrição.
+      item_prototypes:
+      - uuid: e6c6092d02cb4247ae918c7e0ab84e30
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): tráfego de entrada'
+        key: capacity.if.in[{#SNMPINDEX}]
+        description: Bits por segundo recebidos (IF-MIB ifHCInOctets).
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: in
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: SNMP_AGENT
+        snmp_oid: 1.3.6.1.2.1.31.1.1.1.6.{#SNMPINDEX}
+        delay: '{$CAPACITY.INTERVAL}'
+        history: 7d
+        value_type: UNSIGNED
+        units: bps
+        preprocessing:
+        - type: CHANGE_PER_SECOND
+          parameters:
+          - ''
+        - type: MULTIPLIER
+          parameters:
+          - '8'
+      - uuid: 0f25277fc46146808b7ee02916143da8
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): tráfego de saída'
+        key: capacity.if.out[{#SNMPINDEX}]
+        description: Bits por segundo enviados (IF-MIB ifHCOutOctets).
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: out
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: SNMP_AGENT
+        snmp_oid: 1.3.6.1.2.1.31.1.1.1.10.{#SNMPINDEX}
+        delay: '{$CAPACITY.INTERVAL}'
+        history: 7d
+        value_type: UNSIGNED
+        units: bps
+        preprocessing:
+        - type: CHANGE_PER_SECOND
+          parameters:
+          - ''
+        - type: MULTIPLIER
+          parameters:
+          - '8'
+      - uuid: 5f9a2eabe92e457ca85fe6a7d7d5a4d0
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): velocidade da porta'
+        key: capacity.if.speed[{#SNMPINDEX}]
+        description: Velocidade informada pelo equipamento (IF-MIB ifHighSpeed).
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: speed
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: SNMP_AGENT
+        snmp_oid: 1.3.6.1.2.1.31.1.1.1.15.{#SNMPINDEX}
+        delay: '{$CAPACITY.INTERVAL}'
+        history: 7d
+        trends: '0'
+        value_type: UNSIGNED
+        units: bps
+        preprocessing:
+        - type: MULTIPLIER
+          parameters:
+          - '1000000'
+        - type: DISCARD_UNCHANGED_HEARTBEAT
+          parameters:
+          - 1h
+      - uuid: ce1b93bbaf4d44adae1cf4bfc1c8f975
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): status operacional'
+        key: capacity.if.status[{#SNMPINDEX}]
+        description: IF-MIB ifOperStatus.
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: status
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: SNMP_AGENT
+        snmp_oid: 1.3.6.1.2.1.2.2.1.8.{#SNMPINDEX}
+        delay: '{$CAPACITY.INTERVAL}'
+        history: 7d
+        trends: '0'
+        value_type: UNSIGNED
+        valuemap:
+          name: capacity ifOperStatus
+        preprocessing:
+        - type: DISCARD_UNCHANGED_HEARTBEAT
+          parameters:
+          - 1h
+      - uuid: 6677de3d5dd542c995aee4f03882f918
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): capacidade'
+        key: capacity.if.bw[{#SNMPINDEX}]
+        description: 'Capacidade usada no cálculo: a banda contratada ({$CAPACITY.BW.MBPS:"CIRCUIT_ID"} em Mbps; num enlace compartilhado o contexto é o nome da interface) ou, se não houver, a velocidade da porta.'
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: bw
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.INTERVAL}'
+        history: 7d
+        trends: '0'
+        value_type: FLOAT
+        units: bps
+        params: ({$CAPACITY.BW.MBPS:"{#BW_KEY}"}=0)*last(//capacity.if.speed[{#SNMPINDEX}])+{$CAPACITY.BW.MBPS:"{#BW_KEY}"}*1000000
+      - uuid: 55b40b508a4444918e0c2bea99098104
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): utilização'
+        key: capacity.if.util[{#SNMPINDEX}]
+        description: Maior sentido (entrada ou saída) dividido pela capacidade.
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: util
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.INTERVAL}'
+        history: 35d
+        value_type: FLOAT
+        units: '%'
+        params: 100*max(last(//capacity.if.in[{#SNMPINDEX}]),last(//capacity.if.out[{#SNMPINDEX}]))/last(//capacity.if.bw[{#SNMPINDEX}])
+      - uuid: 07fc3c16a30d4ec9a0ea838b8ae9514a
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): utilização p95'
+        key: capacity.if.util.p95[{#SNMPINDEX}]
+        description: 'Percentil 95 da utilização em {$CAPACITY.P95.PERIOD}: o uso "normal de pico", sem os picos raros.'
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: p95
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.CALC.INTERVAL}'
+        history: 400d
+        trends: '0'
+        value_type: FLOAT
+        units: '%'
+        params: percentile(//capacity.if.util[{#SNMPINDEX}],{$CAPACITY.P95.PERIOD},95)
+        trigger_prototypes:
+        - uuid: 01ab48325da445be919b7146cd62d750
+          expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>={$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}
+          name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de {$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}%'
+          opdata: 'p95: {ITEM.LASTVALUE1}'
+          url: zabbix.php?action=nettopo.capacity&hostid={HOST.ID}&snmpindex={#SNMPINDEX}
+          url_name: 'Planejamento de capacidade: {#CIRCUIT_LABEL}'
+          priority: HIGH
+          description: 'O p95 de utilização passou do limite crítico do papel do equipamento. Limite por circuito: {$CAPACITY.UTIL.CRIT:"CIRCUIT_ID"}.'
+          tags:
+          - tag: capacity
+            value: p95
+          - tag: circuit
+            value: '{#CIRCUITS}'
+          - tag: component
+            value: capacity
+          - tag: interface
+            value: '{#IFNAME}'
+          - tag: scope
+            value: capacity
+          - tag: segment
+            value: '{#SEGMENT}'
+        - uuid: 20fc6061361e462a90a420702ce9ce14
+          expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>={$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"}
+          name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de {$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"}%'
+          opdata: 'p95: {ITEM.LASTVALUE1}'
+          url: zabbix.php?action=nettopo.capacity&hostid={HOST.ID}&snmpindex={#SNMPINDEX}
+          url_name: 'Planejamento de capacidade: {#CIRCUIT_LABEL}'
+          priority: WARNING
+          description: O p95 de utilização passou do limite de atenção. Hora de planejar aumento.
+          dependencies:
+          - name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de {$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}%'
+            expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>={$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}
+          tags:
+          - tag: capacity
+            value: p95
+          - tag: circuit
+            value: '{#CIRCUITS}'
+          - tag: component
+            value: capacity
+          - tag: interface
+            value: '{#IFNAME}'
+          - tag: scope
+            value: capacity
+          - tag: segment
+            value: '{#SEGMENT}'
+      - uuid: f4b6ebd2fd7649838bc33b5500dfe1ef
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): pico em 24h'
+        key: capacity.if.util.peak[{#SNMPINDEX}]
+        description: Maior utilização nas últimas 24 horas.
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: peak
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.CALC.INTERVAL}'
+        history: 400d
+        trends: '0'
+        value_type: FLOAT
+        units: '%'
+        params: max(//capacity.if.util[{#SNMPINDEX}],1d)
+      - uuid: 4ba24604bfb84311b0fc5b4ca6ccea2a
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): utilização média'
+        key: capacity.if.util.avg[{#SNMPINDEX}]
+        description: 'Média da utilização em {$CAPACITY.AVG.PERIOD} (padrão 30 dias): o uso típico, para comparar com o atual e o p95.'
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: avg
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.CALC.INTERVAL}'
+        history: 400d
+        trends: '0'
+        value_type: FLOAT
+        units: '%'
+        params: avg(//capacity.if.util[{#SNMPINDEX}],{$CAPACITY.AVG.PERIOD})
+      - uuid: 146d1d19a7294963af48c949e5bf430a
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): crescimento do p95 em 30 dias'
+        key: capacity.if.growth[{#SNMPINDEX}]
+        description: Quanto o p95 sobe em 30 dias (pontos percentuais), pela reta de tendência de {$CAPACITY.TREND.PERIOD}. Base do crescimento mensal e da capacidade recomendada.
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: growth
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.CALC.INTERVAL}'
+        history: 400d
+        trends: '0'
+        value_type: FLOAT
+        units: p.p.
+        params: forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},30d)-forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},0)
+      - uuid: 5c29c44ca66d4ad7846cd2d1f1d0725b
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): p95 previsto'
+        key: capacity.if.util.forecast[{#SNMPINDEX}]
+        description: p95 previsto daqui a {$CAPACITY.FORECAST.HORIZON}, pela tendência de {$CAPACITY.TREND.PERIOD}.
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: forecast
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.CALC.INTERVAL}'
+        history: 400d
+        trends: '0'
+        value_type: FLOAT
+        units: '%'
+        params: forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.FORECAST.HORIZON})
+      - uuid: c3a5229bcdd84740b9ef4c9aeecc8459
+        name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): dias até o limite crítico'
+        key: capacity.if.days_left[{#SNMPINDEX}]
+        description: Dias até o p95 chegar ao limite crítico, pela tendência de {$CAPACITY.TREND.PERIOD}. 3650 = sem tendência de alta (o p95 previsto sobe menos de {$CAPACITY.TREND.MIN} ponto(s) percentual(is) em {$CAPACITY.FORECAST.HORIZON}); 0 = subindo e já no limite (a linha de tendência já passou do limite); negativo = dados insuficientes.
+        tags:
+        - tag: alias
+          value: '{#IFALIAS}'
+        - tag: capacity
+          value: days
+        - tag: cid_source
+          value: '{#CID_SOURCE}'
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: link
+          value: '{#LINK}'
+        - tag: segment
+          value: '{#SEGMENT}'
+        type: CALCULATED
+        delay: '{$CAPACITY.CALC.INTERVAL}'
+        history: 400d
+        trends: '0'
+        value_type: FLOAT
+        units: dias
+        params: ((last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//capacity.if.util.p95[{#SNMPINDEX}]))<{$CAPACITY.TREND.MIN})*3650+((last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//capacity.if.util.p95[{#SNMPINDEX}]))>={$CAPACITY.TREND.MIN})*((timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})/86400)<3650)*(timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})/86400)
+      trigger_prototypes:
+      - uuid: 6c5e5ba1836942bdbf9d105d6861ca2a
+        expression: last(/Template Capacity Planning/capacity.if.days_left[{#SNMPINDEX}])>=0 and last(/Template Capacity Planning/capacity.if.days_left[{#SNMPINDEX}])<{$CAPACITY.FORECAST.DAYS} and last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])<{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}
+        name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) deve chegar a {$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}% em menos de {$CAPACITY.FORECAST.DAYS} dias'
+        opdata: Faltam {ITEM.LASTVALUE1}
+        url: zabbix.php?action=nettopo.capacity&hostid={HOST.ID}&snmpindex={#SNMPINDEX}
+        url_name: 'Planejamento de capacidade: {#CIRCUIT_LABEL}'
+        priority: INFO
+        description: Pela tendência de {$CAPACITY.TREND.PERIOD}, o p95 chega ao limite crítico antes de {$CAPACITY.FORECAST.DAYS} dias.
+        manual_close: 'YES'
+        tags:
+        - tag: capacity
+          value: forecast
+        - tag: circuit
+          value: '{#CIRCUITS}'
+        - tag: component
+          value: capacity
+        - tag: interface
+          value: '{#IFNAME}'
+        - tag: scope
+          value: capacity
+        - tag: segment
+          value: '{#SEGMENT}'
+      master_item:
+        key: capacity.if.walk
+      preprocessing:
+      - type: JAVASCRIPT
+        parameters:
+        - |
+          // Capacity Planning - discovery of the interfaces that belong to circuits.
+          // Zabbix JavaScript preprocessing (Duktape, ES5 only).
+          // Input: walk[] text with IF-MIB ifName, ifAlias, ifHighSpeed, ifDescr and SNMPv2-MIB sysName.
+          // Output: one LLD row per interface whose description (ifAlias) has
+          //   - a circuit ID: "CID:NET-TO-0001" (several IDs: "CID:NET-TO-0001,NET-TO-0002"), or
+          //   - a shared-link word: UPLINK, TRONCO, TRUNK (configurable).
+          // Optional: when {$CAPACITY.NETBOX.URL} is set, interfaces without a CID in the description take it
+          // from NetBox (custom field {$CAPACITY.NETBOX.FIELD} of the interface, or its description).
+          // Optional: the host macro {$CIRCUIT_ID} gives the circuit of the whole device (usually a CPE); it goes to
+          // the interfaces named in {$CIRCUIT_ID.IF} (names separated by commas, * matches anything: "ether1",
+          // "GigabitEthernet0/0/0", "sfp-sfpplus*").
+          //
+          // Zabbix replaces the user macros below before running the script.
+          var SEGMENT = cfg('{$CAPACITY.SEGMENT}', '');
+          var CID_PREFIX = cfg('{$CAPACITY.CID.PREFIX}', 'CID');
+          var SHARED_WORDS = cfg('{$CAPACITY.SHARED.WORDS}', 'UPLINK,TRONCO,TRUNK');
+          var NETBOX_URL = cfg('{$CAPACITY.NETBOX.URL}', '');
+          var NETBOX_TOKEN = cfg('{$CAPACITY.NETBOX.TOKEN}', '');
+          var NETBOX_FIELD = cfg('{$CAPACITY.NETBOX.FIELD}', 'circuit_id');
+          var NETBOX_DEVICE = cfg('{$CAPACITY.NETBOX.DEVICE}', '');
+          var HOST_CID = cfg('{$CIRCUIT_ID}', '');
+          var HOST_CID_IF = cfg('{$CIRCUIT_ID.IF}', '');
+
+          var OID_IFNAME = '1.3.6.1.2.1.31.1.1.1.1.';
+          var OID_IFALIAS = '1.3.6.1.2.1.31.1.1.1.18.';
+          var OID_IFHIGHSPEED = '1.3.6.1.2.1.31.1.1.1.15.';
+          var OID_IFDESCR = '1.3.6.1.2.1.2.2.1.2.';
+          var OID_SYSNAME = '1.3.6.1.2.1.1.5.0';
+
+          var SEGMENT_LABELS = {backbone: 'Backbone', distribuicao: 'Distribuição', cpe: 'CPE', indefinido: 'Indefinido'};
+
+          var ID = '[A-Za-z0-9][A-Za-z0-9._/-]*';
+          var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])' + escapeRe(CID_PREFIX) + '\\s*[:=#]\\s*(' + ID + '(?:\\s*[,;]\\s*' + ID + ')*)', 'i');
+          var SHARED_RE = wordsRe(SHARED_WORDS);
+          var HOST_CIDS = splitIds(HOST_CID);
+          var HOST_CID_RE = HOST_CIDS.length ? namesRe(HOST_CID_IF) : null;
+
+          function cfg(value, fallback) {
+              var v = String(value).replace(/^\s+|\s+$/g, '');
+
+              // A macro that is not defined anywhere reaches the script unexpanded ("{$...}").
+              return (v === '' || v.indexOf('{$') === 0) ? fallback : v;
+          }
+
+          function escapeRe(s) {
+              return s.replace(/[\\^$.*+?()[\]{}|\/-]/g, '\\$&');
+          }
+
+          function wordsRe(list) {
+              var words = [], parts = list.split(/[,;]/), k, w;
+
+              for (k = 0; k < parts.length; k++) {
+                  w = parts[k].replace(/^\s+|\s+$/g, '');
+                  if (w !== '') {
+                      words.push(escapeRe(w));
+                  }
+              }
+
+              return words.length ? new RegExp('(?:^|[^A-Za-z0-9])(?:' + words.join('|') + ')(?:[^A-Za-z0-9]|$)', 'i') : null;
+          }
+
+          // "ether1, Gi0/0/*" -> /^(?:ether1|Gi0\/0\/.*)$/i ; null when the list is empty.
+          function namesRe(list) {
+              var names = [], parts = list.split(/[,;]/), k, n;
+
+              for (k = 0; k < parts.length; k++) {
+                  n = parts[k].replace(/^\s+|\s+$/g, '');
+                  if (n !== '') {
+                      names.push(escapeRe(n).replace(/\\\*/g, '.*').replace(/\\\?/g, '.'));
+                  }
+              }
+
+              return names.length ? new RegExp('^(?:' + names.join('|') + ')$', 'i') : null;
+          }
+
+          function splitIds(text) {
+              var ids = [], seen = {}, parts = String(text).split(/[,;\s]+/), k, id;
+
+              for (k = 0; k < parts.length; k++) {
+                  id = parts[k].replace(/[._\/-]+$/, '').toUpperCase();
+                  if (/^[A-Z0-9][A-Z0-9._\/-]*$/.test(id) && !seen[id]) {
+                      seen[id] = true;
+                      ids.push(id);
+                  }
+              }
+
+              return ids;
+          }
+
+          function cidsFrom(description) {
+              var m = CID_RE.exec(description || '');
+
+              return m ? splitIds(m[1]) : [];
+          }
+
+          function isShared(description) {
+              return SHARED_RE !== null && SHARED_RE.test(description || '');
+          }
+
+          function normalizeSegment(s) {
+              var v = s.toLowerCase()
+                  .replace(/[à-å]/g, 'a').replace(/ç/g, 'c').replace(/[è-ë]/g, 'e')
+                  .replace(/[ì-ï]/g, 'i').replace(/[ò-ö]/g, 'o').replace(/[ù-ü]/g, 'u');
+
+              if (/^(backbone|core|nucleo)$/.test(v)) {
+                  return 'backbone';
+              }
+              if (/^(distribuicao|distribution|metro|agregacao|aggregation)$/.test(v)) {
+                  return 'distribuicao';
+              }
+              if (/^(cpe|acesso|access|cliente|customer)$/.test(v)) {
+                  return 'cpe';
+              }
+
+              return 'indefinido';
+          }
+
+          function unescapeQuoted(s) {
+              return s.replace(/\\(.)/g, '$1');
+          }
+
+          function parseWalk(text) {
+              var out = {}, i = 0, n = text.length, c, s, oid, m, type, val, e, nl;
+
+              while (i < n) {
+                  c = text.charAt(i);
+                  if (c === '\n' || c === '\r' || c === ' ' || c === '\t') {
+                      i++;
+                      continue;
+                  }
+
+                  s = i;
+                  while (i < n && '0123456789.'.indexOf(text.charAt(i)) !== -1) {
+                      i++;
+                  }
+                  oid = text.substring(s, i);
+                  while (i < n && text.charAt(i) === ' ') {
+                      i++;
+                  }
+
+                  if (oid === '' || text.charAt(i) !== '=') {
+                      nl = text.indexOf('\n', i);
+                      i = nl < 0 ? n : nl + 1;
+                      continue;
+                  }
+
+                  if (oid.charAt(0) === '.') {
+                      oid = oid.substring(1);
+                  }
+
+                  i++;
+                  while (i < n && text.charAt(i) === ' ') {
+                      i++;
+                  }
+
+                  type = '';
+                  m = /^([A-Za-z][A-Za-z0-9\-]*):/.exec(text.substring(i, i + 40));
+                  if (m) {
+                      type = m[1];
+                      i += m[0].length;
+                      while (i < n && text.charAt(i) === ' ') {
+                          i++;
+                      }
+                  }
+
+                  if (text.charAt(i) === '"') {
+                      e = i + 1;
+                      while (e < n) {
+                          c = text.charAt(e);
+                          if (c === '\\') {
+                              e += 2;
+                              continue;
+                          }
+                          if (c === '"') {
+                              break;
+                          }
+                          e++;
+                      }
+                      val = unescapeQuoted(text.substring(i + 1, e));
+                      nl = text.indexOf('\n', e);
+                      i = nl < 0 ? n : nl + 1;
+                  }
+                  else if (type === 'Hex-STRING') {
+                      e = i;
+                      while (true) {
+                          nl = text.indexOf('\n', e);
+                          if (nl < 0) {
+                              e = n;
+                              break;
+                          }
+                          if (text.charAt(nl + 1) === '.' || /^[0-9]+(\.[0-9]+)+ *=/.test(text.substring(nl + 1, nl + 200))) {
+                              e = nl;
+                              break;
+                          }
+                          e = nl + 1;
+                      }
+                      val = hexToText(text.substring(i, e));
+                      i = e + 1;
+                  }
+                  else {
+                      nl = text.indexOf('\n', i);
+                      e = nl < 0 ? n : nl;
+                      val = text.substring(i, e).replace(/\s+$/, '');
+                      i = e + 1;
+                  }
+
+                  out[oid] = val;
+              }
+
+              return out;
+          }
+
+          // Descriptions with accents come as Hex-STRING (UTF-8 bytes).
+          function hexToText(v) {
+              var parts = v.replace(/\s+/g, ' ').replace(/^ +| +$/g, '').split(' '), bytes = [], r = '', k, b, b2, b3;
+
+              for (k = 0; k < parts.length; k++) {
+                  if (/^[0-9A-Fa-f]{2}$/.test(parts[k])) {
+                      bytes.push(parseInt(parts[k], 16));
+                  }
+              }
+
+              for (k = 0; k < bytes.length; k++) {
+                  b = bytes[k];
+                  if (b === 0) {
+                      continue;
+                  }
+                  if (b < 0x80) {
+                      r += String.fromCharCode(b);
+                  }
+                  else if ((b & 0xE0) === 0xC0 && k + 1 < bytes.length) {
+                      b2 = bytes[++k];
+                      r += String.fromCharCode(((b & 0x1F) << 6) | (b2 & 0x3F));
+                  }
+                  else if ((b & 0xF0) === 0xE0 && k + 2 < bytes.length) {
+                      b2 = bytes[++k];
+                      b3 = bytes[++k];
+                      r += String.fromCharCode(((b & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
+                  }
+                  else {
+                      r += String.fromCharCode(b);
+                  }
+              }
+
+              return r;
+          }
+
+          function netboxIds(value) {
+              var ids = [], k, v;
+
+              if (value === null || value === undefined || value === '') {
+                  return [];
+              }
+              if (Object.prototype.toString.call(value) === '[object Array]') {
+                  for (k = 0; k < value.length; k++) {
+                      ids = ids.concat(netboxIds(value[k]));
+                  }
+                  return splitIds(ids.join(','));
+              }
+              if (typeof value === 'object') {
+                  v = value.cid || value.display || value.name || '';
+                  return splitIds(String(v));
+              }
+
+              return splitIds(String(value));
+          }
+
+          // NetBox interfaces of the device: lowercase name => {cids: [...], shared: bool}.
+          function netboxInterfaces(device) {
+              var result = {}, pages = 0, url, req, body, data, list, k, it, ids, tags, t;
+
+              url = NETBOX_URL.replace(/\/+$/, '') + '/api/dcim/interfaces/?limit=1000&device=' + encodeURIComponent(device);
+
+              while (url && pages < 50) {
+                  req = new HttpRequest();
+                  req.addHeader('Accept: application/json');
+                  if (NETBOX_TOKEN !== '') {
+                      // "Token xxx" (API token v1) unless a scheme is given, e.g. "Bearer nbt_...".
+                      req.addHeader('Authorization: ' + (NETBOX_TOKEN.indexOf(' ') > 0 ? NETBOX_TOKEN : 'Token ' + NETBOX_TOKEN));
+                  }
+
+                  body = req.get(url);
+
+                  if (req.getStatus() !== 200) {
+                      throw 'NetBox answered HTTP ' + req.getStatus() + ' for ' + url;
+                  }
+
+                  data = JSON.parse(body);
+                  list = data.results || [];
+
+                  for (k = 0; k < list.length; k++) {
+                      it = list[k];
+                      ids = netboxIds((it.custom_fields || {})[NETBOX_FIELD]);
+                      if (!ids.length) {
+                          ids = cidsFrom(it.description || '');
+                      }
+
+                      tags = [];
+                      for (t = 0; t < (it.tags || []).length; t++) {
+                          tags.push(it.tags[t].name || it.tags[t].slug || '');
+                      }
+
+                      result[String(it.name).toLowerCase()] = {
+                          cids: ids,
+                          shared: isShared(it.description || '') || isShared(tags.join(' '))
+                      };
+                  }
+
+                  url = data.next || '';
+                  pages++;
+              }
+
+              return result;
+          }
+
+          var walk = parseWalk(value);
+          var segment = normalizeSegment(SEGMENT);
+          var indexes = [], seen = {}, oid, idx, k;
+
+          for (oid in walk) {
+              if (walk.hasOwnProperty(oid)) {
+                  if (oid.indexOf(OID_IFNAME) === 0) {
+                      idx = oid.substring(OID_IFNAME.length);
+                  }
+                  else if (oid.indexOf(OID_IFDESCR) === 0) {
+                      idx = oid.substring(OID_IFDESCR.length);
+                  }
+                  else {
+                      continue;
+                  }
+
+                  if (/^[0-9]+$/.test(idx) && !seen[idx]) {
+                      seen[idx] = true;
+                      indexes.push(idx);
+                  }
+              }
+          }
+
+          indexes.sort(function(a, b) {
+              return parseInt(a, 10) - parseInt(b, 10);
+          });
+
+          var netbox = null;
+
+          if (NETBOX_URL !== '') {
+              netbox = netboxInterfaces(NETBOX_DEVICE !== '' ? NETBOX_DEVICE : (walk[OID_SYSNAME] || ''));
+          }
+
+          var rows = [];
+
+          for (k = 0; k < indexes.length; k++) {
+              idx = indexes[k];
+
+              var name = walk[OID_IFNAME + idx] || walk[OID_IFDESCR + idx] || ('if' + idx);
+              var alias = walk[OID_IFALIAS + idx] || '';
+              var descr = walk[OID_IFDESCR + idx] || '';
+              var cids = cidsFrom(alias);
+              var shared = isShared(alias);
+              var source = cids.length ? 'descricao' : '';
+              var nb = netbox !== null ? netbox[name.toLowerCase()] : null;
+
+              if (nb) {
+                  if (!cids.length && nb.cids.length) {
+                      cids = nb.cids;
+                      source = 'netbox';
+                  }
+                  shared = shared || nb.shared;
+              }
+
+              // Circuit of the device (host macro): the chosen interfaces belong to that circuit only.
+              if (!cids.length && HOST_CID_RE !== null && (HOST_CID_RE.test(name) || (descr !== '' && HOST_CID_RE.test(descr)))) {
+                  cids = HOST_CIDS;
+                  shared = false;
+                  source = 'macro';
+              }
+
+              if (!cids.length && !shared) {
+                  continue;
+              }
+
+              var speed = parseInt(walk[OID_IFHIGHSPEED + idx] || '0', 10);
+
+              rows.push({
+                  '{#SNMPINDEX}': idx,
+                  '{#IFNAME}': name,
+                  '{#IFALIAS}': alias,
+                  '{#IFSPEED}': String(isNaN(speed) ? 0 : speed),
+                  '{#CIRCUIT_ID}': cids.length ? cids[0] : '',
+                  // Context of {$CAPACITY.BW.MBPS}: the (first) circuit ID, or the interface name for shared links.
+                  '{#BW_KEY}': cids.length ? cids[0] : name,
+                  '{#CIRCUITS}': cids.join(','),
+                  '{#CIRCUIT_LABEL}': cids.length ? cids.join(',') : 'compartilhado',
+                  '{#LINK}': shared ? 'compartilhado' : 'dedicado',
+                  '{#SEGMENT}': segment,
+                  '{#SEGMENT_LABEL}': SEGMENT_LABELS[segment],
+                  '{#CID_SOURCE}': source
+              });
+          }
+
+          return JSON.stringify(rows);
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+    tags:
+    - tag: class
+      value: network
+    - tag: target
+      value: capacity
+    macros:
+    - macro: '{$CAPACITY.AVG.PERIOD}'
+      value: 30d
+      description: Janela da utilização média.
+    - macro: '{$CAPACITY.BW.MBPS}'
+      value: '0'
+      description: 'Banda contratada em Mbps (0 = usar a velocidade da porta). Use contexto por circuito: {$CAPACITY.BW.MBPS:"NET-TO-0001"}=300 (pode ser macro global).'
+    - macro: '{$CAPACITY.CALC.INTERVAL}'
+      value: 1h
+      description: Intervalo dos cálculos de p95, pico e previsão.
+    - macro: '{$CAPACITY.CID.PREFIX}'
+      value: CID
+      description: 'Palavra antes do identificador na descrição da interface: CID:NET-TO-0001.'
+    - macro: '{$CAPACITY.FORECAST.DAYS}'
+      value: '60'
+      description: Avisar quando a previsão de saturação for menor que este número de dias.
+    - macro: '{$CAPACITY.FORECAST.HORIZON}'
+      value: 30d
+      description: Daqui a quanto tempo calcular o "p95 previsto".
+    - macro: '{$CAPACITY.INTERVAL}'
+      value: 5m
+      description: Intervalo de coleta do tráfego (5 minutos é o padrão de mercado para p95).
+    - macro: '{$CAPACITY.LLD.INTERVAL}'
+      value: 1h
+      description: Intervalo de leitura das descrições das interfaces (descoberta).
+    - macro: '{$CAPACITY.LOST.KEEP}'
+      value: 30d
+      description: Por quanto tempo manter os itens de uma interface que perdeu o CID na descrição.
+    - macro: '{$CAPACITY.NETBOX.DEVICE}'
+      value: ''
+      description: Nome do equipamento no NetBox (vazio = sysName informado pelo equipamento).
+    - macro: '{$CAPACITY.NETBOX.FIELD}'
+      value: circuit_id
+      description: Campo personalizado da interface no NetBox com o CID.
+    - macro: '{$CAPACITY.NETBOX.TOKEN}'
+      type: SECRET_TEXT
+      description: Token da API do NetBox ("Bearer nbt_..." para tokens v2).
+    - macro: '{$CAPACITY.NETBOX.URL}'
+      value: ''
+      description: 'Opcional: URL do NetBox (ex.: https://netbox.exemplo). Vazio = só a descrição da interface.'
+    - macro: '{$CAPACITY.P95.PERIOD}'
+      value: 7d
+      description: Janela do percentil 95.
+    - macro: '{$CAPACITY.SEGMENT}'
+      value: ''
+      description: 'Papel do equipamento: backbone, distribuicao ou cpe (definido pelo template de perfil).'
+    - macro: '{$CAPACITY.SHARED.WORDS}'
+      value: UPLINK,TRONCO,TRUNK
+      description: Palavras que marcam um enlace compartilhado por vários circuitos.
+    - macro: '{$CAPACITY.TREND.MIN}'
+      value: '1'
+      description: Crescimento mínimo do p95 (pontos percentuais em {$CAPACITY.FORECAST.HORIZON}) para considerar tendência de alta. Abaixo disso é oscilação normal.
+    - macro: '{$CAPACITY.TREND.PERIOD}'
+      value: 30d
+      description: Janela da tendência usada na previsão.
+    - macro: '{$CAPACITY.UTIL.CRIT}'
+      value: '90'
+      description: Limite crítico de utilização (%). Os perfis mudam o padrão; contexto por circuito aceito.
+    - macro: '{$CAPACITY.UTIL.WARN}'
+      value: '70'
+      description: Limite de atenção de utilização (%). Os perfis mudam o padrão; contexto por circuito aceito.
+    - macro: '{$CIRCUIT_ID}'
+      value: ''
+      description: 'Opcional, no host: circuito(s) do equipamento inteiro (ex.: NET-RJ-0005), para CPEs sem CID na descrição da interface. Vai para as interfaces escolhidas por {$CIRCUIT_ID.IF}.'
+    - macro: '{$CIRCUIT_ID.IF}'
+      value: ''
+      description: 'Interface(s) que recebem o {$CIRCUIT_ID} do host: nomes separados por vírgula, * vale qualquer coisa (ex.: ether1 ou GigabitEthernet0/0/0 ou sfp-sfpplus*).'
+    valuemaps:
+    - uuid: 4faec59527e24ae8ab1c55f2c113bccc
+      name: capacity ifOperStatus
+      mappings:
+      - value: '1'
+        newvalue: up
+      - value: '2'
+        newvalue: down
+      - value: '3'
+        newvalue: testing
+      - value: '4'
+        newvalue: unknown
+      - value: '5'
+        newvalue: dormant
+      - value: '6'
+        newvalue: notPresent
+      - value: '7'
+        newvalue: lowerLayerDown
+  - uuid: 7bd293e970884de0b152124823015afa
+    template: Template Capacity Planning - Backbone
+    name: Template Capacity Planning - Backbone
+    description: |
+      Capacity planning - camada 2 (perfil Backbone).
+      Roteadores core, enlaces troncais e interfaces de backbone. Limites mais baixos: o backbone precisa de folga para absorver a queda de um tronco.
+
+      Vincule este template aos equipamentos desse papel. Ele inclui o template base e define
+      {$CAPACITY.SEGMENT}=backbone e os limites de utilização do papel (atenção 60%, crítico 80%).
+    vendor:
+      name: nettopo
+      version: '1.4'
+    templates:
+    - name: Template Capacity Planning
+    groups:
+    - name: Templates/Capacity Planning
+    tags:
+    - tag: class
+      value: network
+    - tag: target
+      value: capacity
+    - tag: segment
+      value: backbone
+    macros:
+    - macro: '{$CAPACITY.SEGMENT}'
+      value: backbone
+      description: Papel do equipamento.
+    - macro: '{$CAPACITY.UTIL.CRIT}'
+      value: '80'
+      description: Limite crítico do papel (%).
+    - macro: '{$CAPACITY.UTIL.WARN}'
+      value: '60'
+      description: Limite de atenção do papel (%).
+  - uuid: 2ae94abb72174484a794836c1863fccd
+    template: Template Capacity Planning - Distribuicao
+    name: Template Capacity Planning - Distribuicao
+    description: |
+      Capacity planning - camada 2 (perfil Distribuicao).
+      Switches/roteadores de agregação, equipamentos metro e distribuição regional.
+
+      Vincule este template aos equipamentos desse papel. Ele inclui o template base e define
+      {$CAPACITY.SEGMENT}=distribuicao e os limites de utilização do papel (atenção 70%, crítico 85%).
+    vendor:
+      name: nettopo
+      version: '1.4'
+    templates:
+    - name: Template Capacity Planning
+    groups:
+    - name: Templates/Capacity Planning
+    tags:
+    - tag: class
+      value: network
+    - tag: target
+      value: capacity
+    - tag: segment
+      value: distribuicao
+    macros:
+    - macro: '{$CAPACITY.SEGMENT}'
+      value: distribuicao
+      description: Papel do equipamento.
+    - macro: '{$CAPACITY.UTIL.CRIT}'
+      value: '85'
+      description: Limite crítico do papel (%).
+    - macro: '{$CAPACITY.UTIL.WARN}'
+      value: '70'
+      description: Limite de atenção do papel (%).
+  - uuid: dc5718c25fe6453a9d78a4d29656dda1
+    template: Template Capacity Planning - CPE
+    name: Template Capacity Planning - CPE
+    description: |
+      Capacity planning - camada 2 (perfil CPE).
+      CPE do cliente e interfaces de última milha (normalmente limitadas pela banda contratada).
+
+      Vincule este template aos equipamentos desse papel. Ele inclui o template base e define
+      {$CAPACITY.SEGMENT}=cpe e os limites de utilização do papel (atenção 80%, crítico 95%).
+    vendor:
+      name: nettopo
+      version: '1.4'
+    templates:
+    - name: Template Capacity Planning
+    groups:
+    - name: Templates/Capacity Planning
+    tags:
+    - tag: class
+      value: network
+    - tag: target
+      value: capacity
+    - tag: segment
+      value: cpe
+    macros:
+    - macro: '{$CAPACITY.SEGMENT}'
+      value: cpe
+      description: Papel do equipamento.
+    - macro: '{$CAPACITY.UTIL.CRIT}'
+      value: '95'
+      description: Limite crítico do papel (%).
+    - macro: '{$CAPACITY.UTIL.WARN}'
+      value: '80'
+      description: Limite de atenção do papel (%).

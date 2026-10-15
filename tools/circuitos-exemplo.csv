@@ -1,0 +1,3 @@
+circuit_id;host;interface;contracted_mbps
+NET-RJ-0002;PE15-PENEDO;sfp-sfpplus1;1000
+NET-RJ-0004;PE5-QUATIS;XGigabitEthernet0/0/2;8000
