@@ -4,7 +4,7 @@
 	"type": "module",
 	"name": "Network Topology",
 	"namespace": "NetTopo",
-	"version": "1.4.0",
+	"version": "1.4.1",
 	"author": "Lucas Ferreira de Almeida",
 	"url": "",
 	"description": "Network topology map built from LLDP/CDP neighbors, host tags, map links and trigger dependencies, colored by problem severity and link status. Saved standard maps with drawings and curved links, published as native Zabbix maps. Capacity planning by circuit (CIRCUIT_ID): overview by risk, load of each segment and bottleneck, recommended upgrades with simulation, chain map colored by utilization.",

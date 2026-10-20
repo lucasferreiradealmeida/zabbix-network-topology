@@ -78,7 +78,7 @@ perfil, no host ou por circuito.
 | **Naming padrão** | `CID:<CIRCUIT_ID>` na descrição da interface; `UPLINK`/`TRONCO` nos enlaces compartilhados (ver abaixo). |
 | **Macros** | `{$CIRCUIT_ID}` + `{$CIRCUIT_ID.IF}` no host (circuito do equipamento inteiro, para CPEs), banda contratada por circuito `{$CAPACITY.BW.MBPS:"NET-TO-0001"}=300`, limites por papel e por circuito (`{$CAPACITY.UTIL.CRIT:"NET-TO-0001"}=70`), janelas de p95 e de tendência. |
 | **Tags** | Itens e problemas recebem `circuit`, `segment` (backbone/distribuicao/cpe), `link` (dedicado/compartilhado), `interface`, `capacity` (a métrica) e `cid_source` (de onde veio o CIRCUIT_ID: descricao, netbox ou macro); os itens também levam `alias` (a descrição da interface, de onde sai o cliente/site da tela). Dá para filtrar em Últimos dados e Problemas por `circuit` = `NET-TO-0001`. |
-| **Inventário** | O campo **Tipo** do host é preenchido com Backbone, Distribuição ou CPE (inventário em modo automático). O script de enriquecimento também lê o CIRCUIT_ID de um campo do inventário. |
+| **Inventário** | O script de enriquecimento lê o CIRCUIT_ID de um campo do inventário. O papel do equipamento fica no item **Capacidade: papel do equipamento** (o template não usa campos do inventário, para não conflitar com os templates de fabricante). |
 | **Dashboards por circuito** | Botão **Criar / atualizar dashboard** no detalhe do circuito: cria o dashboard público "Capacidade - NET-TO-0001" com um medidor por trecho, o gráfico do caminho e os problemas das interfaces do caminho (capacidade e link down). |
 
 ## Como identificar o mesmo circuito em vários hosts
@@ -314,7 +314,7 @@ do circuito aceso.
 |---|---|
 | **LLD** (descoberta) | lê as descrições a cada `{$CAPACITY.LLD.INTERVAL}` e cria/remove os itens das interfaces sozinho |
 | **API do Zabbix** | `tools/capacity_enrich.py` grava `{$CIRCUIT_ID}`, `{$CIRCUIT_ID.IF}` e a banda contratada a partir de CSV, inventário, tag ou nome do host |
-| **Inventário** | o template preenche o campo Tipo (papel); o script lê o CIRCUIT_ID de qualquer campo do inventário |
+| **Inventário** | o script lê o CIRCUIT_ID de qualquer campo do inventário |
 | **Base externa / CMDB** | NetBox direto na descoberta (`{$CAPACITY.NETBOX.URL}`), ou uma exportação CSV de qualquer CMDB pelo script |
 
 Exemplos do script (sem `--apply` ele só mostra o que mudaria):
@@ -400,14 +400,13 @@ precisa ser Super admin; as macros de host pedem permissão de escrita nos hosts
    novos (média de 30 dias, crescimento) e o link dos problemas chegam às interfaces já descobertas em até
    1 hora.
 2. Vincule os perfis por papel: um grupo de hosts por papel facilita (ex.: "Regional Norte/Core").
-3. (Opcional) Deixe o inventário dos hosts em **Automático** para preencher o campo Tipo.
-4. Combine o padrão de nomes com a equipe de rede e comece por um piloto pequeno (alguns circuitos de uma
+3. Combine o padrão de nomes com a equipe de rede e comece por um piloto pequeno (alguns circuitos de uma
    região). Em até 1 hora (`{$CAPACITY.LLD.INTERVAL}`) as interfaces aparecem.
-5. Banda contratada: macros globais `{$CAPACITY.BW.MBPS:"NET-TO-0001"}` = `300` (Mbps) — à mão ou pelo
+4. Banda contratada: macros globais `{$CAPACITY.BW.MBPS:"NET-TO-0001"}` = `300` (Mbps) — à mão ou pelo
    script com a coluna `contracted_mbps`.
-6. CPEs sem CID na descrição: `{$CIRCUIT_ID}` e `{$CIRCUIT_ID.IF}` no host (ou o script).
-7. Ajuste os limites dos perfis se precisar.
-8. NetBox (opcional): preencha `{$CAPACITY.NETBOX.URL}` e `{$CAPACITY.NETBOX.TOKEN}` (macro secreta).
+5. CPEs sem CID na descrição: `{$CIRCUIT_ID}` e `{$CIRCUIT_ID.IF}` no host (ou o script).
+6. Ajuste os limites dos perfis se precisar.
+7. NetBox (opcional): preencha `{$CAPACITY.NETBOX.URL}` e `{$CAPACITY.NETBOX.TOKEN}` (macro secreta).
    Interfaces sem CID na descrição passam a buscar o CID no campo personalizado
    `{$CAPACITY.NETBOX.FIELD}` (padrão `circuit_id`) da interface no NetBox, ou na descrição dela lá.
    O nome do equipamento no NetBox é o sysName (ou `{$CAPACITY.NETBOX.DEVICE}`).

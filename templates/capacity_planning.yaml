@@ -27,7 +27,7 @@ zabbix_export:
       onde veio o CID de cada interface: descricao, netbox ou macro.
     vendor:
       name: nettopo
-      version: '1.4'
+      version: 1.4.1
     groups:
     - name: Templates/Capacity Planning
     items:
@@ -50,13 +50,12 @@ zabbix_export:
       delay: '0'
       history: 7d
       value_type: CHAR
-      inventory_link: TYPE
-      description: Backbone, Distribuição ou CPE ({$CAPACITY.SEGMENT}, definido pelo template de perfil). Também preenche o campo "Tipo" do inventário (inventário em modo automático).
+      description: Backbone, Distribuição ou CPE ({$CAPACITY.SEGMENT}, definido pelo template de perfil).
       preprocessing:
       - type: JAVASCRIPT
         parameters:
         - |
-          // Role of the device for capacity planning; also written to the host inventory field "Type".
+          // Role of the device for capacity planning.
           var v = String('{$CAPACITY.SEGMENT}').toLowerCase()
               .replace(/[à-å]/g, 'a').replace(/ç/g, 'c').replace(/[è-ë]/g, 'e')
               .replace(/[ì-ï]/g, 'i').replace(/[ò-ö]/g, 'o').replace(/[ù-ü]/g, 'u');
@@ -1029,7 +1028,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=backbone e os limites de utilização do papel (atenção 60%, crítico 80%).
     vendor:
       name: nettopo
-      version: '1.4'
+      version: 1.4.1
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1062,7 +1061,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=distribuicao e os limites de utilização do papel (atenção 70%, crítico 85%).
     vendor:
       name: nettopo
-      version: '1.4'
+      version: 1.4.1
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1095,7 +1094,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=cpe e os limites de utilização do papel (atenção 80%, crítico 95%).
     vendor:
       name: nettopo
-      version: '1.4'
+      version: 1.4.1
     templates:
     - name: Template Capacity Planning
     groups:

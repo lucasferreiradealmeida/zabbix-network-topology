@@ -1,5 +1,12 @@
 # Mudanças
 
+## 1.4.1
+
+- Templates de capacity: o item "papel do equipamento" não preenche mais o campo **Tipo** do inventário. Os
+  templates de fabricante (ex.: Huawei) já usam esse campo, e o Zabbix recusava vincular o perfil de capacity
+  ("Cannot inherit item with key capacity.segment ... inventory field Type is already populated"). Importe de
+  novo `templates/capacity_planning.yaml`.
+
 ## 1.4.0
 
 - Primeira versão pública (licença MIT), com README em inglês.

@@ -1570,6 +1570,14 @@ class TopologyBuilder {
 			}
 		}
 
+		// The capacity planning CPE profile says what the device is better than its LLDP capabilities (a CPE is
+		// often a router).
+		foreach ($host['parentTemplates'] ?? [] as $template) {
+			if (preg_match('/capacity planning\s*-\s*cpe$/i', $template['name'])) {
+				return 'cpe';
+			}
+		}
+
 		$type = self::typeFromCaps($this->host_caps[$host['hostid']] ?? '');
 
 		if ($type !== null) {

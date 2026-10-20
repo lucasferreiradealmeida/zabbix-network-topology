@@ -16,8 +16,9 @@ GROUP = 'Templates/Network devices'
 VERSION = '1.0'
 # Capacity planning templates: 1.2 adds the host macro {$CIRCUIT_ID} and the item tag cid_source; 1.3 adds the
 # 30-day average, the monthly growth, the item tag alias and the link from the problems to the module page;
-# 1.4 gives the templates neutral names ("Template Capacity Planning ...").
-CAP_VERSION = '1.4'
+# 1.4 gives the templates neutral names ("Template Capacity Planning ..."); 1.4.1 no longer fills the inventory
+# field "Type" (vendor templates such as Huawei's already use it, and Zabbix allows one item per field).
+CAP_VERSION = '1.4.1'
 
 
 def uid(path):
@@ -234,7 +235,7 @@ CAP_WALK_OIDS = [
     '1.3.6.1.2.1.1.5',          # sysName
 ]
 
-CAP_SEGMENT_JS = r"""// Role of the device for capacity planning; also written to the host inventory field "Type".
+CAP_SEGMENT_JS = r"""// Role of the device for capacity planning.
 var v = String('{$CAPACITY.SEGMENT}').toLowerCase()
     .replace(/[à-å]/g, 'a').replace(/ç/g, 'c').replace(/[è-ë]/g, 'e')
     .replace(/[ì-ï]/g, 'i').replace(/[ò-ö]/g, 'o').replace(/[ù-ü]/g, 'u');
@@ -448,9 +449,7 @@ def capacity_base_template():
                 'delay': '0',
                 'history': '7d',
                 'value_type': 'CHAR',
-                'inventory_link': 'TYPE',
-                'description': 'Backbone, Distribuição ou CPE ({$CAPACITY.SEGMENT}, definido pelo template de perfil). '
-                               'Também preenche o campo "Tipo" do inventário (inventário em modo automático).',
+                'description': 'Backbone, Distribuição ou CPE ({$CAPACITY.SEGMENT}, definido pelo template de perfil).',
                 'preprocessing': [
                     {'type': 'JAVASCRIPT', 'parameters': [Literal(CAP_SEGMENT_JS)]},
                     {'type': 'DISCARD_UNCHANGED_HEARTBEAT', 'parameters': ['1d']},
