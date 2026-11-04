@@ -18,7 +18,7 @@ VERSION = '1.0'
 # 30-day average, the monthly growth, the item tag alias and the link from the problems to the module page;
 # 1.4 gives the templates neutral names ("Template Capacity Planning ..."); 1.4.1 no longer fills the inventory
 # field "Type" (vendor templates such as Huawei's already use it, and Zabbix allows one item per field).
-CAP_VERSION = '1.5.0'
+CAP_VERSION = '1.5.1'
 
 
 def uid(path):
@@ -419,7 +419,7 @@ def capacity_base_template():
             '{$CAPACITY.CID.PREFIX}, que aceita lista: CID,EVC_ID lê "EVC_ID#40137877"), ou uma palavra de enlace\n'
             'compartilhado (UPLINK, TRONCO, TRUNK) ou um campo inteiro de uma descrição separada por "|"\n'
             '({$CAPACITY.SHARED.FIELDS}=CORE). A banda escrita na descrição ("nome|BORDER|200M|EVC_ID#1") vira a\n'
-            'capacidade da interface. Para cada uma coleta tráfego, capacidade, utilização, p95,\n'
+            'capacidade da interface (também com chave: "B:1G"). Para cada uma coleta tráfego, capacidade, utilização, p95,\n'
             'pico de 24h, média de 30 dias, crescimento mensal e a previsão de saturação, com as tags circuit,\n'
             'segment, link, interface e alias. Os problemas trazem um link para o circuito no módulo.\n'
             'O módulo "Network Topology" usa essas tags para montar o caminho de cada circuito e apontar o gargalo.\n\n'
@@ -513,9 +513,9 @@ def capacity_base_template():
                             'da porta.'},
             {'macro': '{$CAPACITY.CALC.INTERVAL}', 'value': '1h',
              'description': 'Intervalo dos cálculos de p95, pico e previsão.'},
-            {'macro': '{$CAPACITY.CID.PREFIX}', 'value': 'CID,EVC_ID',
+            {'macro': '{$CAPACITY.CID.PREFIX}', 'value': 'CID,EVC_ID,EID',
              'description': 'Palavra(s) antes do identificador na descrição da interface, separadas por vírgula: '
-                            'CID:NET-TO-0001 ou EVC_ID#40137877.'},
+                            'CID:NET-TO-0001, EVC_ID#40137877 ou EID=7604002.'},
             {'macro': '{$CAPACITY.FORECAST.DAYS}', 'value': '60',
              'description': 'Avisar quando a previsão de saturação for menor que este número de dias.'},
             {'macro': '{$CAPACITY.FORECAST.HORIZON}', 'value': '30d',

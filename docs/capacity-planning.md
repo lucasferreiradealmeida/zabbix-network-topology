@@ -142,13 +142,24 @@ Cliente Beta|BORDER|200M|EVC_ID#1002|SVID#3725
 AGG-1 - CORE-2|CORE|100G|Operadora A|X-5001|10.0.0.35
 ```
 
+Outra variação comum usa chaves (`T:`, `O:`, `E:`, `I:`, `B:`, `C:`), com o ID e a designação dentro de `C:`:
+
+```text
+T:INF|O:SITE-A|B:1G|C:DES=L2L-0001-SITE-A;PEER_IP=10.0.0.39;EID=9001
+T:OPE|O:CARRIER-A|E:SW-CARRIER|I:17|B:1G|C:SITE-A;DES=L2L-0001-SITE-A;EID=9001
+```
+
+Aqui o circuito é o `EID=9001` (aparece igual na distribuição e no CPE) e a banda é o `B:1G`. Escolha como ID
+o campo que se repete **igual** nos pontos do caminho. A designação (`DES=`) às vezes vem escrita de outro
+jeito de um lado para o outro e não serve de chave.
+
 Não precisa mudar nada no equipamento. O template lê três coisas dessa ficha:
 
 | O que | Como | Macro (já vem pronta no template) |
 |---|---|---|
-| **Circuito** | a palavra antes do `#`, `:` ou `=` (aceita lista: `CID,EVC_ID`) | `{$CAPACITY.CID.PREFIX}` = `CID,EVC_ID` |
-| **Enlace compartilhado** | um campo **inteiro** igual a `CORE` (não pega `CORE-1-POP_CORE-2-POP`) | `{$CAPACITY.SHARED.FIELDS}` = `CORE` |
-| **Banda** | um campo inteiro como `100M`, `1G`, `2,5G`, `10 Gbps` | `{$CAPACITY.BW.FROM.DESC}` = `1` (0 desliga) |
+| **Circuito** | a palavra antes do `#`, `:` ou `=` (aceita lista: `CID,EVC_ID,EID`) | `{$CAPACITY.CID.PREFIX}` = `CID,EVC_ID,EID` |
+| **Enlace compartilhado** | um campo **inteiro** igual a `CORE` (não pega `CORE-1-POP_CORE-2-POP`); lista separada por vírgula, ex.: `CORE,E:CORE-1` (uplink que tem o campo `E:CORE-1`) | `{$CAPACITY.SHARED.FIELDS}` = `CORE` |
+| **Banda** | um campo inteiro como `100M`, `1G`, `2,5G`, `10 Gbps`, ou com chave: `B:1G`, `BW=100M` | `{$CAPACITY.BW.FROM.DESC}` = `1` (0 desliga) |
 
 A banda da descrição vira a capacidade da interface (o item "capacidade"), na ordem: **banda contratada**
 `{$CAPACITY.BW.MBPS:"<circuito>"}` → **banda da descrição** → **velocidade da porta**. Isso importa para
@@ -435,14 +446,17 @@ Como montar o mínimo, sem LLDP, CDP nem NetBox:
    `tools/capacity_enrich.py` preenche essas macros a partir de uma planilha.
 3. Marque os enlaces compartilhados (uplink do POP e troncos do core) com as palavras
    `UPLINK`/`TRONCO`/`TRUNK` ou com o campo `CORE`.
-4. Banda: na descrição (`|100M|`) ou em `{$CAPACITY.BW.MBPS:"<circuito>"}`.
+4. Banda: na descrição (`|100M|`, `B:1G`) ou em `{$CAPACITY.BW.MBPS:"<circuito>"}`.
+5. Ligue o uplink da distribuição ao core com **uma tag de host por uplink** (não por circuito):
+   `topology.link` = `NOME-DO-CORE | porta do uplink na distribuição | porta no core`. Com ela o módulo
+   sabe que aquele uplink sobe para o core e inclui os troncos do core no circuito.
 
 O que muda sem os vizinhos:
 
 | Função | Sem LLDP/CDP |
 |---|---|
 | Gargalo pelos 4 critérios, visão por trecho, previsão, capacidade recomendada, simulação, visão geral | Funcionam, com os trechos formados pelas interfaces que têm o ID e pelos enlaces compartilhados. |
-| Uplink da distribuição e troncos do core | Sem saber quem liga em quem, o módulo considera **todos** os enlaces compartilhados dos equipamentos que têm uma interface com o ID do circuito. O gargalo mostra o mais carregado deles. |
+| Uplink da distribuição e troncos do core | Sem saber quem liga em quem, o módulo considera **todos** os enlaces compartilhados dos equipamentos que têm uma interface com o ID do circuito (o core entra pela tag `topology.link` do passo 5). O gargalo mostra o mais carregado deles. |
 | Equipamento sem o ID | Sem vizinhos, um equipamento só entra no caminho se tiver uma interface com o ID (ou a macro `{$CIRCUIT_ID}`). Se o ID não está na distribuição, o trecho de distribuição do circuito não aparece. |
 | Sugestões "o ID está faltando na outra ponta" | Não aparecem (dependem do vizinho). Use a linha **CIRCUIT_ID nos 3 papéis**. |
 | Mapa de topologia | Os links vêm de tags de host `topology.link`, de mapas nativos do Zabbix ou de dependências de trigger. |

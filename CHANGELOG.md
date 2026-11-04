@@ -1,5 +1,13 @@
 # Mudanças
 
+## 1.5.1
+
+- Descrições com chaves (`T:INF|O:SITE|B:1G|C:DES=...;EID=9001`): a banda aceita chave (`B:1G`, `BW=100M`) e o
+  prefixo padrão do circuito passa a ser `CID,EVC_ID,EID`.
+- Correção: numa descrição como `EID=9002;PEER_IP=10.0.0.63`, o `;` fazia `PEER_IP` virar um segundo circuito
+  (`9002,PEER_IP`). Agora uma palavra que é a chave do próximo campo não entra na lista de IDs.
+- Importe de novo `templates/capacity_planning.yaml`. O módulo não mudou.
+
 ## 1.5.0
 
 - **Capacity planning sem LLDP/CDP e sem NetBox**: o circuito pode vir de descrições que a rede já tem, sem

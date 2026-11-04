@@ -16,7 +16,7 @@ zabbix_export:
       {$CAPACITY.CID.PREFIX}, que aceita lista: CID,EVC_ID lê "EVC_ID#40137877"), ou uma palavra de enlace
       compartilhado (UPLINK, TRONCO, TRUNK) ou um campo inteiro de uma descrição separada por "|"
       ({$CAPACITY.SHARED.FIELDS}=CORE). A banda escrita na descrição ("nome|BORDER|200M|EVC_ID#1") vira a
-      capacidade da interface. Para cada uma coleta tráfego, capacidade, utilização, p95,
+      capacidade da interface (também com chave: "B:1G"). Para cada uma coleta tráfego, capacidade, utilização, p95,
       pico de 24h, média de 30 dias, crescimento mensal e a previsão de saturação, com as tags circuit,
       segment, link, interface e alias. Os problemas trazem um link para o circuito no módulo.
       O módulo "Network Topology" usa essas tags para montar o caminho de cada circuito e apontar o gargalo.
@@ -30,7 +30,7 @@ zabbix_export:
       onde veio o CID de cada interface: descricao, netbox ou macro.
     vendor:
       name: nettopo
-      version: 1.5.0
+      version: 1.5.1
     groups:
     - name: Templates/Capacity Planning
     items:
@@ -565,7 +565,10 @@ zabbix_export:
           var SEGMENT_LABELS = {backbone: 'Backbone', distribuicao: 'Distribuição', cpe: 'CPE', indefinido: 'Indefinido'};
 
           var ID = '[A-Za-z0-9][A-Za-z0-9._/-]*';
-          var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])(?:' + prefixAlternatives(CID_PREFIX) + ')\\s*[:=#]\\s*(' + ID + '(?:\\s*[,;]\\s*' + ID + ')*)', 'i');
+          // After the first ID, "," or ";" adds another ID only when that word is not the key of the next field:
+          // "EID=9002;PEER_IP=10.0.0.63" is one circuit, "CID:NET-TO-0001,NET-TO-0002" is two.
+          var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])(?:' + prefixAlternatives(CID_PREFIX) + ')\\s*[:=#]\\s*(' + ID +
+              '(?:\\s*[,;]\\s*(?![A-Za-z0-9._/-]+\\s*[:=#])' + ID + ')*)', 'i');
           var SHARED_RE = wordsRe(SHARED_WORDS);
           var SHARED_FIELD_LIST = fieldList(SHARED_FIELDS);
           var HOST_CIDS = splitIds(HOST_CID);
@@ -680,7 +683,8 @@ zabbix_export:
               return false;
           }
 
-          // Capacity written as a whole "|"-separated field ("100M", "1G", "10 Gbps", "2,5G"): Mbps, 0 = none.
+          // Capacity written as a whole "|"-separated field ("100M", "1G", "10 Gbps", "2,5G", or with a key: "B:1G",
+          // "BW=100M"): Mbps, 0 = none.
           function bandwidthFrom(description) {
               var fields, k, m, unit;
 
@@ -691,7 +695,7 @@ zabbix_export:
               fields = String(description || '').split('|');
 
               for (k = 0; k < fields.length; k++) {
-                  m = /^\s*([0-9]+(?:[.,][0-9]+)?)\s*([MGT])(?:bps|bit|b)?\s*$/i.exec(fields[k]);
+                  m = /^\s*(?:(?:B|BW|BANDA|BANDWIDTH)\s*[:=]\s*)?([0-9]+(?:[.,][0-9]+)?)\s*([MGT])(?:bps|bit|b)?\s*$/i.exec(fields[k]);
                   if (m) {
                       unit = m[2].toUpperCase();
 
@@ -1027,8 +1031,8 @@ zabbix_export:
       value: 1h
       description: Intervalo dos cálculos de p95, pico e previsão.
     - macro: '{$CAPACITY.CID.PREFIX}'
-      value: CID,EVC_ID
-      description: 'Palavra(s) antes do identificador na descrição da interface, separadas por vírgula: CID:NET-TO-0001 ou EVC_ID#40137877.'
+      value: CID,EVC_ID,EID
+      description: 'Palavra(s) antes do identificador na descrição da interface, separadas por vírgula: CID:NET-TO-0001, EVC_ID#40137877 ou EID=7604002.'
     - macro: '{$CAPACITY.FORECAST.DAYS}'
       value: '60'
       description: Avisar quando a previsão de saturação for menor que este número de dias.
@@ -1115,7 +1119,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=backbone e os limites de utilização do papel (atenção 60%, crítico 80%).
     vendor:
       name: nettopo
-      version: 1.5.0
+      version: 1.5.1
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1148,7 +1152,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=distribuicao e os limites de utilização do papel (atenção 70%, crítico 85%).
     vendor:
       name: nettopo
-      version: 1.5.0
+      version: 1.5.1
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1181,7 +1185,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=cpe e os limites de utilização do papel (atenção 80%, crítico 95%).
     vendor:
       name: nettopo
-      version: 1.5.0
+      version: 1.5.1
     templates:
     - name: Template Capacity Planning
     groups:

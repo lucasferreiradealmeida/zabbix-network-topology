@@ -36,7 +36,10 @@ var OID_SYSNAME = '1.3.6.1.2.1.1.5.0';
 var SEGMENT_LABELS = {backbone: 'Backbone', distribuicao: 'Distribuição', cpe: 'CPE', indefinido: 'Indefinido'};
 
 var ID = '[A-Za-z0-9][A-Za-z0-9._/-]*';
-var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])(?:' + prefixAlternatives(CID_PREFIX) + ')\\s*[:=#]\\s*(' + ID + '(?:\\s*[,;]\\s*' + ID + ')*)', 'i');
+// After the first ID, "," or ";" adds another ID only when that word is not the key of the next field:
+// "EID=9002;PEER_IP=10.0.0.63" is one circuit, "CID:NET-TO-0001,NET-TO-0002" is two.
+var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])(?:' + prefixAlternatives(CID_PREFIX) + ')\\s*[:=#]\\s*(' + ID +
+	'(?:\\s*[,;]\\s*(?![A-Za-z0-9._/-]+\\s*[:=#])' + ID + ')*)', 'i');
 var SHARED_RE = wordsRe(SHARED_WORDS);
 var SHARED_FIELD_LIST = fieldList(SHARED_FIELDS);
 var HOST_CIDS = splitIds(HOST_CID);
@@ -151,7 +154,8 @@ function isShared(description) {
 	return false;
 }
 
-// Capacity written as a whole "|"-separated field ("100M", "1G", "10 Gbps", "2,5G"): Mbps, 0 = none.
+// Capacity written as a whole "|"-separated field ("100M", "1G", "10 Gbps", "2,5G", or with a key: "B:1G",
+// "BW=100M"): Mbps, 0 = none.
 function bandwidthFrom(description) {
 	var fields, k, m, unit;
 
@@ -162,7 +166,7 @@ function bandwidthFrom(description) {
 	fields = String(description || '').split('|');
 
 	for (k = 0; k < fields.length; k++) {
-		m = /^\s*([0-9]+(?:[.,][0-9]+)?)\s*([MGT])(?:bps|bit|b)?\s*$/i.exec(fields[k]);
+		m = /^\s*(?:(?:B|BW|BANDA|BANDWIDTH)\s*[:=]\s*)?([0-9]+(?:[.,][0-9]+)?)\s*([MGT])(?:bps|bit|b)?\s*$/i.exec(fields[k]);
 		if (m) {
 			unit = m[2].toUpperCase();
 

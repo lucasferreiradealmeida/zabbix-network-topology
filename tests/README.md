@@ -7,6 +7,8 @@
   (`macros.json` = `{"{$CAPACITY.SEGMENT}": "distribuicao"}`; o mock responde `HttpRequest.get()` por trecho de URL).
   Descrições em ficha com `|` (`Cliente|BORDER|100M|EVC_ID#1001`), sem `CID:`: `node run_preproc.js ../templates/src/capacity_lld.js fixtures/capacity_pipe.walk fixtures/capacity_pipe_macros.json`
   (esperado: 3 circuitos `EVC_ID`, 1 `CID`, 3 enlaces `CORE` compartilhados, `{#BW_DESC}` em Mbps; o campo `CORE-1-POP_CORE-2-POP` não vira enlace).
+  Descrições com chaves (`T:INF|O:SITE|B:1G|C:DES=...;EID=9001`): `node run_preproc.js ../templates/src/capacity_lld.js fixtures/capacity_kv.walk fixtures/capacity_kv_macros.json`
+  (esperado: circuitos `9001`, `9002` (sem `PEER_IP`) e `9005`, banda em `{#BW_DESC}`, e os uplinks `E:CORE-1` compartilhados).
   Macro de host `{$CIRCUIT_ID}`: `node run_preproc.js ../templates/src/capacity_lld.js fixtures/capacity_dist.walk fixtures/capacity_cpe_macro.json`
   (a interface `XGigabitEthernet0/0/5`, sem CID na descrição, recebe `NET-TO-0042` com `{#CID_SOURCE}` = `macro`).
 - `fixtures/*.walk` — saídas de `walk[]` no formato do Zabbix (Huawei, Cisco, CDP), com casos difíceis
