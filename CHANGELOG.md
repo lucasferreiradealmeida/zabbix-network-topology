@@ -1,5 +1,17 @@
 # Mudanças
 
+## 1.5.0
+
+- **Capacity planning sem LLDP/CDP e sem NetBox**: o circuito pode vir de descrições que a rede já tem, sem
+  mudar equipamento. Veja "Sem LLDP/CDP" em `docs/capacity-planning.md`.
+  - `{$CAPACITY.CID.PREFIX}` aceita lista (padrão `CID,EVC_ID`): lê `EVC_ID#40137877` além de `CID:...`.
+  - Novo `{$CAPACITY.SHARED.FIELDS}` (padrão `CORE`): marca como enlace compartilhado um campo inteiro de uma
+    descrição separada por `|` (`nome|CORE|100G|...`).
+  - Nova banda pela descrição (`|100M|`, `|1G|`, `|2,5G|`): vira a capacidade da interface quando não há
+    `{$CAPACITY.BW.MBPS}`; antes era a velocidade da porta (uma porta de cliente de 10G com 100M contratados
+    aparecia com 1% de uso). `{$CAPACITY.BW.FROM.DESC}`=0 desliga. A ordem é contrato, descrição, porta.
+  - Importe de novo `templates/capacity_planning.yaml`. O módulo não mudou.
+
 ## 1.4.1
 
 - Templates de capacity: o item "papel do equipamento" não preenche mais o campo **Tipo** do inventário. Os

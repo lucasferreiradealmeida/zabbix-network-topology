@@ -18,7 +18,7 @@ VERSION = '1.0'
 # 30-day average, the monthly growth, the item tag alias and the link from the problems to the module page;
 # 1.4 gives the templates neutral names ("Template Capacity Planning ..."); 1.4.1 no longer fills the inventory
 # field "Type" (vendor templates such as Huawei's already use it, and Zabbix allows one item per field).
-CAP_VERSION = '1.4.1'
+CAP_VERSION = '1.5.0'
 
 
 def uid(path):
@@ -328,11 +328,13 @@ def capacity_base_template():
                  history='7d', trends='0', value_type='UNSIGNED', valuemap={'name': 'capacity ifOperStatus'},
                  preprocessing=[{'type': 'DISCARD_UNCHANGED_HEARTBEAT', 'parameters': ['1h']}]),
         cap_item(t, 'capacity.if.bw[{#SNMPINDEX}]', 'capacidade', 'bw',
-                 'Capacidade usada no cálculo: a banda contratada ({$CAPACITY.BW.MBPS:"CIRCUIT_ID"} em Mbps; '
-                 'num enlace compartilhado o contexto é o nome da interface) ou, se não houver, a velocidade da porta.',
+                 'Capacidade usada no cálculo, na ordem: a banda contratada ({$CAPACITY.BW.MBPS:"CIRCUIT_ID"} em '
+                 'Mbps; num enlace compartilhado o contexto é o nome da interface), a banda escrita na descrição da '
+                 'interface ("nome|BORDER|200M|EVC_ID#1") ou a velocidade da porta.',
                  type='CALCULATED', delay='{$CAPACITY.INTERVAL}', history='7d', trends='0', value_type='FLOAT',
                  units='bps',
-                 params='(%s=0)*last(//capacity.if.speed[{#SNMPINDEX}])+%s*1000000' % (bw, bw)),
+                 params='(%s=0)*({#BW_DESC}*1000000+({#BW_DESC}=0)*last(//capacity.if.speed[{#SNMPINDEX}]))+%s*1000000'
+                        % (bw, bw)),
         cap_item(t, 'capacity.if.util[{#SNMPINDEX}]', 'utilização', 'util',
                  'Maior sentido (entrada ou saída) dividido pela capacidade.',
                  type='CALCULATED', delay='{$CAPACITY.INTERVAL}', history='35d', value_type='FLOAT', units='%',
@@ -413,8 +415,11 @@ def capacity_base_template():
             'Capacity planning - camada 1 (template base). Não vincule este template direto: use um dos perfis\n'
             '"%s - Backbone", "- Distribuicao" ou "- CPE", que o incluem.\n\n'
             'Descobre as interfaces cuja descrição (ifAlias) tem o identificador do circuito, por exemplo\n'
-            '"CID:NET-TO-0001" (vários circuitos: "CID:NET-TO-0001,NET-TO-0002"), ou uma palavra de enlace\n'
-            'compartilhado (UPLINK, TRONCO, TRUNK). Para cada uma coleta tráfego, capacidade, utilização, p95,\n'
+            '"CID:NET-TO-0001" (vários circuitos: "CID:NET-TO-0001,NET-TO-0002"; a palavra antes do separador é\n'
+            '{$CAPACITY.CID.PREFIX}, que aceita lista: CID,EVC_ID lê "EVC_ID#40137877"), ou uma palavra de enlace\n'
+            'compartilhado (UPLINK, TRONCO, TRUNK) ou um campo inteiro de uma descrição separada por "|"\n'
+            '({$CAPACITY.SHARED.FIELDS}=CORE). A banda escrita na descrição ("nome|BORDER|200M|EVC_ID#1") vira a\n'
+            'capacidade da interface. Para cada uma coleta tráfego, capacidade, utilização, p95,\n'
             'pico de 24h, média de 30 dias, crescimento mensal e a previsão de saturação, com as tags circuit,\n'
             'segment, link, interface e alias. Os problemas trazem um link para o circuito no módulo.\n'
             'O módulo "Network Topology" usa essas tags para montar o caminho de cada circuito e apontar o gargalo.\n\n'
@@ -502,10 +507,15 @@ def capacity_base_template():
             {'macro': '{$CAPACITY.BW.MBPS}', 'value': '0',
              'description': 'Banda contratada em Mbps (0 = usar a velocidade da porta). Use contexto por circuito: '
                             '{$CAPACITY.BW.MBPS:"NET-TO-0001"}=300 (pode ser macro global).'},
+            {'macro': '{$CAPACITY.BW.FROM.DESC}', 'value': '1',
+             'description': 'Usar a banda escrita na descrição da interface (campo inteiro separado por "|": 100M, '
+                            '1G, 10G) como capacidade quando não houver {$CAPACITY.BW.MBPS}. 0 = usar a velocidade '
+                            'da porta.'},
             {'macro': '{$CAPACITY.CALC.INTERVAL}', 'value': '1h',
              'description': 'Intervalo dos cálculos de p95, pico e previsão.'},
-            {'macro': '{$CAPACITY.CID.PREFIX}', 'value': 'CID',
-             'description': 'Palavra antes do identificador na descrição da interface: CID:NET-TO-0001.'},
+            {'macro': '{$CAPACITY.CID.PREFIX}', 'value': 'CID,EVC_ID',
+             'description': 'Palavra(s) antes do identificador na descrição da interface, separadas por vírgula: '
+                            'CID:NET-TO-0001 ou EVC_ID#40137877.'},
             {'macro': '{$CAPACITY.FORECAST.DAYS}', 'value': '60',
              'description': 'Avisar quando a previsão de saturação for menor que este número de dias.'},
             {'macro': '{$CAPACITY.FORECAST.HORIZON}', 'value': '30d',
@@ -528,6 +538,9 @@ def capacity_base_template():
              'description': 'Janela do percentil 95.'},
             {'macro': '{$CAPACITY.SEGMENT}', 'value': '',
              'description': 'Papel do equipamento: backbone, distribuicao ou cpe (definido pelo template de perfil).'},
+            {'macro': '{$CAPACITY.SHARED.FIELDS}', 'value': 'CORE',
+             'description': 'Campos inteiros (separados por "|") que marcam um enlace compartilhado: '
+                            '"nome|CORE|100G|operadora" é compartilhado, "CORE-RJ-01_CORE-SP-01" não.'},
             {'macro': '{$CAPACITY.SHARED.WORDS}', 'value': 'UPLINK,TRONCO,TRUNK',
              'description': 'Palavras que marcam um enlace compartilhado por vários circuitos.'},
             {'macro': '{$CAPACITY.TREND.MIN}', 'value': '1',

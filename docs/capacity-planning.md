@@ -89,7 +89,7 @@ de cada interface.
 
 | Jeito | Onde se escreve | Quando usar |
 |---|---|---|
-| 1. **Convenção de nome** (recomendado) | descrição da interface: `CID:NET-TO-0001 Escola Centro` | Sempre que der: fica no equipamento, aparece no SNMP e em qualquer ferramenta. |
+| 1. **Convenção de nome** (recomendado) | descrição da interface: `CID:NET-TO-0001 Escola Centro`, ou a ficha que a rede já usa: `Cliente|BORDER|100M|EVC_ID#1001` (veja abaixo) | Sempre que der: fica no equipamento, aparece no SNMP e em qualquer ferramenta. |
 | 2. **Macro de host** | `{$CIRCUIT_ID}` = `NET-TO-0001` e `{$CIRCUIT_ID.IF}` = `ether1` | CPE onde não dá para mexer na descrição. O circuito vale para as interfaces listadas em `{$CIRCUIT_ID.IF}` (nomes separados por vírgula, `*` vale qualquer coisa: `sfp-sfpplus*`). |
 | 3. **Base externa / CMDB (NetBox)** | campo personalizado `circuit_id` da interface no NetBox | Se o NetBox já é a fonte da verdade. Preencha `{$CAPACITY.NETBOX.URL}` e `{$CAPACITY.NETBOX.TOKEN}`. |
 | 4. **Inventário, tag de host ou nome do host** | campo do inventário (ex.: Contract number), tag `circuit` ou um padrão no nome (`CPE-NET-TO-0001`) | Com o script `tools/capacity_enrich.py`, que copia o valor para a macro `{$CIRCUIT_ID}` (jeito 2). |
@@ -131,6 +131,33 @@ Cisco IOS/IOS-XE interface TenGigabitEthernet0/0/1
                   description CID:NET-TO-0001 Escola-Centro
 Juniper          set interfaces xe-0/0/1 description "CID:NET-TO-0001 Escola-Centro"
 ```
+
+### Descrições já existentes, com campos separados por barra (`|`)
+
+Muitas redes já escrevem a descrição como uma ficha, com campos separados por `|`, sem a palavra `CID:`:
+
+```text
+Cliente Alfa|BORDER|100M|EVC_ID#1001|SVID3302
+Cliente Beta|BORDER|200M|EVC_ID#1002|SVID#3725
+AGG-1 - CORE-2|CORE|100G|Operadora A|X-5001|10.0.0.35
+```
+
+Não precisa mudar nada no equipamento. O template lê três coisas dessa ficha:
+
+| O que | Como | Macro (já vem pronta no template) |
+|---|---|---|
+| **Circuito** | a palavra antes do `#`, `:` ou `=` (aceita lista: `CID,EVC_ID`) | `{$CAPACITY.CID.PREFIX}` = `CID,EVC_ID` |
+| **Enlace compartilhado** | um campo **inteiro** igual a `CORE` (não pega `CORE-1-POP_CORE-2-POP`) | `{$CAPACITY.SHARED.FIELDS}` = `CORE` |
+| **Banda** | um campo inteiro como `100M`, `1G`, `2,5G`, `10 Gbps` | `{$CAPACITY.BW.FROM.DESC}` = `1` (0 desliga) |
+
+A banda da descrição vira a capacidade da interface (o item "capacidade"), na ordem: **banda contratada**
+`{$CAPACITY.BW.MBPS:"<circuito>"}` → **banda da descrição** → **velocidade da porta**. Isso importa para
+porta de cliente: o cliente contratou 100M, a porta é de 10G, e a utilização tem de ser medida contra
+os 100M. A tag `cid_source` mostra `descricao` para essas interfaces.
+
+Para mudar o padrão, altere a macro no host ou no template (por exemplo `{$CAPACITY.CID.PREFIX}` = `CIRCUITO`).
+O valor da macro é colado dentro do script de descoberta, então use só palavras: sem aspas, barras
+invertidas ou expressões regulares.
 
 No MikroTik e em outros fabricantes, confira se o texto aparece no SNMP antes de padronizar:
 
@@ -393,6 +420,34 @@ precisa ser Super admin; as macros de host pedem permissão de escrita nos hosts
 
 - **Criar / atualizar dashboard**: cria o dashboard "Capacidade - NET-TO-0001" (público), ou atualiza se
   já existir. Se outra pessoa criou e você não pode editar, ele só é aberto.
+
+## Sem LLDP/CDP
+
+Alguns ambientes não podem ligar LLDP/CDP (política de segurança). O capacity planning funciona assim mesmo,
+porque o circuito vem do **ID escrito em cada interface**, não do protocolo de vizinhança.
+
+Como montar o mínimo, sem LLDP, CDP nem NetBox:
+
+1. Vincule só os perfis de capacity (`Template Capacity Planning - Backbone`, `- Distribuicao`, `- CPE`),
+   mais o template de interface que você já usa. **Não** vincule `Network Topology LLDP/CDP by SNMP`.
+2. Escreva o ID do circuito nas interfaces: na descrição (padrão `CID:...`, ou o padrão que a rede já usa, veja
+   acima) ou, para o CPE, nas macros `{$CIRCUIT_ID}` e `{$CIRCUIT_ID.IF}` do host. O script
+   `tools/capacity_enrich.py` preenche essas macros a partir de uma planilha.
+3. Marque os enlaces compartilhados (uplink do POP e troncos do core) com as palavras
+   `UPLINK`/`TRONCO`/`TRUNK` ou com o campo `CORE`.
+4. Banda: na descrição (`|100M|`) ou em `{$CAPACITY.BW.MBPS:"<circuito>"}`.
+
+O que muda sem os vizinhos:
+
+| Função | Sem LLDP/CDP |
+|---|---|
+| Gargalo pelos 4 critérios, visão por trecho, previsão, capacidade recomendada, simulação, visão geral | Funcionam, com os trechos formados pelas interfaces que têm o ID e pelos enlaces compartilhados. |
+| Uplink da distribuição e troncos do core | Sem saber quem liga em quem, o módulo considera **todos** os enlaces compartilhados dos equipamentos que têm uma interface com o ID do circuito. O gargalo mostra o mais carregado deles. |
+| Equipamento sem o ID | Sem vizinhos, um equipamento só entra no caminho se tiver uma interface com o ID (ou a macro `{$CIRCUIT_ID}`). Se o ID não está na distribuição, o trecho de distribuição do circuito não aparece. |
+| Sugestões "o ID está faltando na outra ponta" | Não aparecem (dependem do vizinho). Use a linha **CIRCUIT_ID nos 3 papéis**. |
+| Mapa de topologia | Os links vêm de tags de host `topology.link`, de mapas nativos do Zabbix ou de dependências de trigger. |
+
+Quanto mais interfaces tiverem o ID, melhor o resultado; dá para começar com poucos circuitos e crescer.
 
 ## Implantar na rede de verdade
 

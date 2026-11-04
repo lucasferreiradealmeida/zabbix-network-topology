@@ -97,7 +97,12 @@ docker compose restart snmpsim
 4. For capacity planning, import `templates/capacity_planning.yaml` and link the role profiles
    (`Template Capacity Planning - Backbone`, `- Distribuicao`, `- CPE`).
 
-Devices need LLDP enabled and the LLDP-MIB exposed over SNMP. Full details, macros and troubleshooting
+The topology map needs LLDP/CDP (or host tags, links of existing Zabbix maps, trigger dependencies).
+**Capacity planning does not need LLDP/CDP**: link only the capacity templates, and it reads the circuit ID and the
+bandwidth from the interface descriptions you already have (for example `Customer|BORDER|100M|EVC_ID#1001`) or
+from host macros. See "Sem LLDP/CDP" in [docs/capacity-planning.md](docs/capacity-planning.md).
+
+For the map, devices need LLDP enabled and the LLDP-MIB exposed over SNMP. Full details, macros and troubleshooting
 are in [README.pt-BR.md](README.pt-BR.md).
 
 ## Repository layout

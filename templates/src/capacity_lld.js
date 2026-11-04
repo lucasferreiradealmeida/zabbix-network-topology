@@ -2,8 +2,12 @@
 // Zabbix JavaScript preprocessing (Duktape, ES5 only).
 // Input: walk[] text with IF-MIB ifName, ifAlias, ifHighSpeed, ifDescr and SNMPv2-MIB sysName.
 // Output: one LLD row per interface whose description (ifAlias) has
-//   - a circuit ID: "CID:NET-TO-0001" (several IDs: "CID:NET-TO-0001,NET-TO-0002"), or
-//   - a shared-link word: UPLINK, TRONCO, TRUNK (configurable).
+//   - a circuit ID: "CID:NET-TO-0001" (several IDs: "CID:NET-TO-0001,NET-TO-0002"). The word before the
+//     separator is configurable and may be a list ({$CAPACITY.CID.PREFIX}=CID,EVC_ID reads "EVC_ID#40137877"), or
+//   - a shared-link word: UPLINK, TRONCO, TRUNK (configurable), or a whole field of a "|"-separated description
+//     ({$CAPACITY.SHARED.FIELDS}=CORE matches "name|CORE|100G|...").
+// The capacity written in a "|"-separated description ("name|BORDER|200M|EVC_ID#1") is returned in {#BW_DESC}
+// (Mbps, 0 = none) and used as the capacity of the interface unless a {$CAPACITY.BW.MBPS} contract exists.
 // Optional: when {$CAPACITY.NETBOX.URL} is set, interfaces without a CID in the description take it
 // from NetBox (custom field {$CAPACITY.NETBOX.FIELD} of the interface, or its description).
 // Optional: the host macro {$CIRCUIT_ID} gives the circuit of the whole device (usually a CPE); it goes to
@@ -14,6 +18,8 @@
 var SEGMENT = cfg('{$CAPACITY.SEGMENT}', '');
 var CID_PREFIX = cfg('{$CAPACITY.CID.PREFIX}', 'CID');
 var SHARED_WORDS = cfg('{$CAPACITY.SHARED.WORDS}', 'UPLINK,TRONCO,TRUNK');
+var SHARED_FIELDS = cfg('{$CAPACITY.SHARED.FIELDS}', '');
+var BW_FROM_DESC = cfg('{$CAPACITY.BW.FROM.DESC}', '1') !== '0';
 var NETBOX_URL = cfg('{$CAPACITY.NETBOX.URL}', '');
 var NETBOX_TOKEN = cfg('{$CAPACITY.NETBOX.TOKEN}', '');
 var NETBOX_FIELD = cfg('{$CAPACITY.NETBOX.FIELD}', 'circuit_id');
@@ -30,8 +36,9 @@ var OID_SYSNAME = '1.3.6.1.2.1.1.5.0';
 var SEGMENT_LABELS = {backbone: 'Backbone', distribuicao: 'Distribuição', cpe: 'CPE', indefinido: 'Indefinido'};
 
 var ID = '[A-Za-z0-9][A-Za-z0-9._/-]*';
-var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])' + escapeRe(CID_PREFIX) + '\\s*[:=#]\\s*(' + ID + '(?:\\s*[,;]\\s*' + ID + ')*)', 'i');
+var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])(?:' + prefixAlternatives(CID_PREFIX) + ')\\s*[:=#]\\s*(' + ID + '(?:\\s*[,;]\\s*' + ID + ')*)', 'i');
 var SHARED_RE = wordsRe(SHARED_WORDS);
+var SHARED_FIELD_LIST = fieldList(SHARED_FIELDS);
 var HOST_CIDS = splitIds(HOST_CID);
 var HOST_CID_RE = HOST_CIDS.length ? namesRe(HOST_CID_IF) : null;
 
@@ -44,6 +51,34 @@ function cfg(value, fallback) {
 
 function escapeRe(s) {
 	return s.replace(/[\\^$.*+?()[\]{}|\/-]/g, '\\$&');
+}
+
+// "CID, EVC_ID" -> "CID|EVC_ID" (escaped); falls back to CID when the list is empty.
+function prefixAlternatives(list) {
+	var words = [], parts = list.split(/[,;]/), k, w;
+
+	for (k = 0; k < parts.length; k++) {
+		w = parts[k].replace(/^\s+|\s+$/g, '');
+		if (w !== '') {
+			words.push(escapeRe(w));
+		}
+	}
+
+	return words.length ? words.join('|') : 'CID';
+}
+
+// "CORE, TRUNK" -> ['CORE', 'TRUNK'] (upper case).
+function fieldList(list) {
+	var out = [], parts = list.split(/[,;]/), k, w;
+
+	for (k = 0; k < parts.length; k++) {
+		w = parts[k].replace(/^\s+|\s+$/g, '').toUpperCase();
+		if (w !== '') {
+			out.push(w);
+		}
+	}
+
+	return out;
 }
 
 function wordsRe(list) {
@@ -94,7 +129,48 @@ function cidsFrom(description) {
 }
 
 function isShared(description) {
-	return SHARED_RE !== null && SHARED_RE.test(description || '');
+	var fields, k, f, w;
+
+	if (SHARED_RE !== null && SHARED_RE.test(description || '')) {
+		return true;
+	}
+
+	if (SHARED_FIELD_LIST.length) {
+		// Whole "|"-separated fields only: "name|CORE|100G" yes, "CORE-RJ-01_CORE-SP-01" no.
+		fields = String(description || '').split('|');
+		for (k = 0; k < fields.length; k++) {
+			f = fields[k].replace(/^\s+|\s+$/g, '').toUpperCase();
+			for (w = 0; w < SHARED_FIELD_LIST.length; w++) {
+				if (f === SHARED_FIELD_LIST[w]) {
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+// Capacity written as a whole "|"-separated field ("100M", "1G", "10 Gbps", "2,5G"): Mbps, 0 = none.
+function bandwidthFrom(description) {
+	var fields, k, m, unit;
+
+	if (!BW_FROM_DESC) {
+		return 0;
+	}
+
+	fields = String(description || '').split('|');
+
+	for (k = 0; k < fields.length; k++) {
+		m = /^\s*([0-9]+(?:[.,][0-9]+)?)\s*([MGT])(?:bps|bit|b)?\s*$/i.exec(fields[k]);
+		if (m) {
+			unit = m[2].toUpperCase();
+
+			return Math.round(parseFloat(m[1].replace(',', '.')) * (unit === 'T' ? 1000000 : (unit === 'G' ? 1000 : 1)) * 1000) / 1000;
+		}
+	}
+
+	return 0;
 }
 
 function normalizeSegment(s) {
@@ -385,6 +461,8 @@ for (k = 0; k < indexes.length; k++) {
 		'{#IFNAME}': name,
 		'{#IFALIAS}': alias,
 		'{#IFSPEED}': String(isNaN(speed) ? 0 : speed),
+		// Capacity written in the description (Mbps, 0 = none): see bandwidthFrom().
+		'{#BW_DESC}': String(bandwidthFrom(alias)),
 		'{#CIRCUIT_ID}': cids.length ? cids[0] : '',
 		// Context of {$CAPACITY.BW.MBPS}: the (first) circuit ID, or the interface name for shared links.
 		'{#BW_KEY}': cids.length ? cids[0] : name,

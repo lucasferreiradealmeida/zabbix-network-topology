@@ -96,6 +96,7 @@ Aparecem **Monitoramento → Topologia de rede** (logo abaixo de Mapas) e **Moni
 2. Vincule **Network Topology LLDP by SNMP** aos roteadores/switches (eles precisam de interface SNMP no Zabbix). Nos Cisco vincule também o de CDP.
 3. Mantenha os templates de interface que você já usa (Huawei VRP, Cisco IOS, Mikrotik, Network Generic...): é deles que o módulo lê status e tráfego das portas.
 4. Para o capacity planning, importe também `templates/capacity_planning.yaml` e vincule os perfis (veja **Planejamento de capacidade** abaixo).
+   O capacity planning **não precisa de LLDP/CDP**: se a sua rede não pode usá-los, vincule só os perfis de capacity. O circuito e a banda podem vir das descrições que a rede já tem (ex.: `Cliente|BORDER|100M|EVC_ID#1001`) ou de macros de host.
 
 O equipamento precisa ter LLDP ligado e expor a LLDP-MIB via SNMP. Para conferir, liste os vizinhos:
 
@@ -143,7 +144,7 @@ Em resumo (o guia completo, com o padrão de nomes para a equipe de rede, está 
 3. Identifique o circuito em cada ponto do caminho — o jeito recomendado é a descrição da interface: `CID:NET-TO-0001` no CPE, na porta da distribuição que desce para o cliente e (se existir) na porta/VLAN do cliente no core. Marque os enlaces compartilhados com `UPLINK` (distribuição → core) e `TRONCO` (troncos do core). CPEs também podem receber o circuito pela macro de host `{$CIRCUIT_ID}`, e o script `tools/capacity_enrich.py` preenche tudo a partir do CMDB, do inventário, de tags ou do nome do host.
 4. Em até 1 hora os circuitos aparecem em **Monitoramento → Planejamento de capacidade**.
 
-O módulo junta as interfaces de cada circuito, completa o caminho **CLIENTE → POP → UPLINK → CORE (interface LAN) → troncos** usando o LLDP/CDP e aponta o gargalo por **4 critérios**: maior utilização, menor capacidade livre, satura primeiro e mais circuitos afetados.
+O módulo junta as interfaces de cada circuito, completa o caminho **CLIENTE → POP → UPLINK → CORE (interface LAN) → troncos** usando o LLDP/CDP (**opcional**: sem eles o caminho é formado pelas interfaces que têm o ID do circuito e pelos enlaces compartilhados, veja "Sem LLDP/CDP" em [docs/capacity-planning.md](docs/capacity-planning.md)) e aponta o gargalo por **4 critérios**: maior utilização, menor capacidade livre, satura primeiro e mais circuitos afetados.
 
 A página tem quatro abas, uma para cada pergunta da equipe — o caminho de trabalho é **alerta → circuito → cadeia → gargalo → previsão → upgrade recomendado**:
 
