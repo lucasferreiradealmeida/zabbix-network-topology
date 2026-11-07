@@ -68,7 +68,8 @@ class CapacityBuilder {
 	];
 
 	/** Metrics needed for the lists; the detail of one circuit reads all of them. */
-	private const LIST_METRICS = ['status', 'speed', 'bw', 'util', 'p95', 'days', 'avg', 'growth'];
+	// forecast: -1 marks a short history (no trend yet).
+	private const LIST_METRICS = ['status', 'speed', 'bw', 'util', 'p95', 'days', 'avg', 'growth', 'forecast'];
 
 	/** "days" values: 3650 and above = no upward trend. */
 	public const DAYS_NONE = 3650;
@@ -1134,6 +1135,15 @@ class CapacityBuilder {
 	}
 
 	/**
+	 * The template (1.6.1+) writes -1 in the forecast while the p95 has less than {$CAPACITY.TREND.HISTORY} of data.
+	 */
+	public static function shortHistory(array $interface): bool {
+		$forecast = $interface['values']['forecast'] ?? null;
+
+		return $forecast !== null && $forecast <= -1 && !isset($interface['errors']['forecast']);
+	}
+
+	/**
 	 * Growth of the p95 over the forecast horizon, in percentage points (null = unknown).
 	 */
 	public static function trend(array $interface): ?float {
@@ -1160,6 +1170,8 @@ class CapacityBuilder {
 				'free' => null,
 				'days' => null,
 				'trend' => null,
+				// The p95 of an interface has less than {$CAPACITY.TREND.HISTORY} of data: no trend yet.
+				'short' => false,
 				'impact' => 0,
 				'fits' => null,
 				'state' => 'nodata',
@@ -1234,6 +1246,10 @@ class CapacityBuilder {
 
 			if ($days !== null) {
 				$s['days'] = $s['days'] === null ? $days : min($s['days'], $days);
+			}
+
+			if (self::shortHistory($interface)) {
+				$s['short'] = true;
 			}
 
 			$trend = self::trend($interface);
@@ -1365,7 +1381,9 @@ class CapacityBuilder {
 		$s['shared'] = $interface['shared'];
 		$s['target'] = $this->planning['targets'][$interface['shared'] ? $segment : 'acesso'];
 		$s['avg'] = isset($v['avg']) && $v['avg'] >= 0 && !isset($interface['errors']['avg']) ? $v['avg'] : null;
-		$s['growth'] = isset($v['growth']) && !isset($interface['errors']['growth']) ? $v['growth'] : null;
+		$s['growth'] = isset($v['growth']) && !isset($interface['errors']['growth']) && !self::shortHistory($interface)
+			? $v['growth']
+			: null;
 
 		if ($s['load'] === null || $s['bw'] === null || $s['bw'] <= 0) {
 			return;

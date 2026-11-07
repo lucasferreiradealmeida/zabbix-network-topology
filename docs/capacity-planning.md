@@ -481,6 +481,7 @@ no caminho; uma que liga a outro core vira tronco.
 | `{$CAPACITY.ROLE.BACKBONE.FIELDS}` | Campos da descrição que indicam tronco de backbone (padrão `CORE`). |
 | `{$CAPACITY.SHARED.EXCLUDE}` (macro **global**, não vem no template) | Palavras que tiram um enlace da conta, como `TEMPORARIO,BACKUP`. |
 | `{$CAPACITY.P2P.ROLES}` | Papéis em que as interfaces /30 e /31 são descobertas (padrão `backbone`). |
+| `{$CAPACITY.TREND.HISTORY}` | Histórico mínimo antes de calcular tendência e previsão (padrão `14d`). Antes disso as telas mostram **histórico curto**. |
 | `{$CAPACITY.ROLE.WARN:"<papel>"}`, `{$CAPACITY.ROLE.CRIT:"<papel>"}` | Limites de atenção e crítico de cada papel (backbone 60/80, distribuição 70/85, CPE 80/95). |
 
 Macros que valem para a rede toda podem ser criadas como **macros globais** (*Administração → Macros*), exceto

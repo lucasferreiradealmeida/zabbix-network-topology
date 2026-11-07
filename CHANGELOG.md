@@ -1,5 +1,15 @@
 # Mudanças
 
+## 1.6.1
+
+- **Tendência só com histórico suficiente.** Com poucos dias de dados, a reta de tendência era esticada para
+  meses ("+365% ao mês", "satura em 37 dias") e disparava falsos problemas "deve chegar ao limite em menos de
+  60 dias". Agora o crescimento, a previsão e os dias até o limite esperam o p95 ter
+  `{$CAPACITY.TREND.HISTORY}` de dados (padrão 14d). Antes disso o p95 previsto vale -1, o crescimento 0, os
+  dias 3650, e o módulo mostra **histórico curto** nas telas de circuito, análise e interfaces.
+- Importe de novo `templates/capacity_planning.yaml` e atualize o módulo. Os itens já descobertos recebem as
+  fórmulas novas na próxima descoberta (até 1 hora).
+
 ## 1.6.0
 
 - **Sem configuração host a host.** Feito para redes grandes sem LLDP/CDP:

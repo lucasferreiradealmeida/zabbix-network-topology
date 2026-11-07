@@ -144,6 +144,11 @@ $fmt_trend = static function(?float $points): string {
 		.I18n::t('p.p.');
 };
 
+// The p95 has less than {$CAPACITY.TREND.HISTORY} (14 days) of data: no trend, forecast or growth yet.
+$short_history = static fn(): CSpan => (new CSpan(I18n::t('short history')))
+	->addClass(ZBX_STYLE_GREY)
+	->setHint(I18n::t('The trend needs %1$s of data. Before that a few days would be stretched into months.', '{$CAPACITY.TREND.HISTORY}'));
+
 // Situation of a circuit (bands 60/80/90 %, role limits and forecast).
 $situation_names = [
 	'critical' => I18n::t('Critical'),
@@ -591,12 +596,14 @@ if ($data['circuit'] !== '') {
 		[I18n::t('Current utilization'), static fn(array $s) => $with_bps($s['util'], $s['bw']), 'util:now'],
 		[I18n::t('95th percentile'), static fn(array $s) => $with_bps($s['p95'], $s['bw']), 'util:p95'],
 		[I18n::t('Average (30 days)'), static fn(array $s) => $fmt_pct($s['avg']), null],
-		[I18n::t('Monthly growth (p95)'), static fn(array $s) => $fmt_growth($s['growth'], $s['load'], $s['bw']),
-			null],
+		[I18n::t('Monthly growth (p95)'), static fn(array $s) => $s['short'] && $s['growth'] === null
+			? $short_history()
+			: $fmt_growth($s['growth'], $s['load'], $s['bw']), null],
 		[I18n::t('Free capacity'), static fn(array $s) => $fmt_bps($s['free']), 'free'],
 		[I18n::t('Time to saturation'), static fn(array $s) => $s['days'] !== null
 			? $fmt_days($s['days'])
-			: ($s['interfaces'] && $s['load'] !== null ? I18n::t('no upward trend') : '—'), 'days'],
+			: ($s['short'] ? $short_history() : ($s['interfaces'] && $s['load'] !== null ? I18n::t('no upward trend') : '—')),
+			'days'],
 		[I18n::t('Circuits on the same segment (impact)'), static fn(array $s) => $s['interfaces'] ? (string) $s['impact'] : '—',
 			'impact'],
 		[I18n::t('Carries the contracted bandwidth'), static fn(array $s) => $s['fits'] === null
@@ -649,10 +656,14 @@ if ($data['circuit'] !== '') {
 			$b !== null && $b['demand'] !== null ? $fmt_bps($b['demand']).' · '.$kind_label($b['kind']) : null
 		),
 		$flow_step(I18n::t('Trend'),
-			$b !== null ? $fmt_growth($b['growth'], $b['load'], $b['bw']) : '—'
+			$b !== null && $b['short'] && $b['growth'] === null
+				? $short_history()
+				: ($b !== null ? $fmt_growth($b['growth'], $b['load'], $b['bw']) : '—')
 		),
 		$flow_step(I18n::t('Forecast'),
-			$circuit['forecast'] !== null ? $fmt_days($circuit['forecast']['days']) : I18n::t('no upward trend'),
+			$circuit['forecast'] !== null
+				? $fmt_days($circuit['forecast']['days'])
+				: ($b !== null && $b['short'] ? $short_history() : I18n::t('no upward trend')),
 			$circuit['forecast'] !== null ? $segment_names[$circuit['forecast']['segment']] : null
 		),
 		$flow_step(I18n::t('Contracted capacity'),
@@ -921,7 +932,9 @@ if ($data['circuit'] !== '') {
 				isset($v['forecast']) && $v['forecast'] >= 0 ? $fmt_pct(min($v['forecast'], 999)) : '—',
 				$days === null || $days < 0
 					? '—'
-					: ($days >= CapacityBuilder::DAYS_NONE ? I18n::t('no upward trend') : $fmt_days($days)),
+					: ($days >= CapacityBuilder::DAYS_NONE
+						? (CapacityBuilder::shortHistory($interface) ? $short_history() : I18n::t('no upward trend'))
+						: $fmt_days($days)),
 				$problems ?: ''
 			]);
 		}
@@ -1412,8 +1425,12 @@ if ($view === 'upgrades' && $focus === '') {
 			$s !== null && $s['load'] !== null
 				? [$fmt_pct($s['load']), (new CDiv($fmt_bps($s['demand'])))->addClass('nt-cap-small')]
 				: (new CSpan('—'))->addClass('nt-cap-muted'),
-			$s !== null ? $fmt_growth($s['growth'], $s['load'], $s['bw']) : '—',
-			$circuit['forecast'] !== null ? $fmt_days($circuit['forecast']['days']) : I18n::t('no upward trend'),
+			$s !== null && $s['short'] && $s['growth'] === null
+				? $short_history()
+				: ($s !== null ? $fmt_growth($s['growth'], $s['load'], $s['bw']) : '—'),
+			$circuit['forecast'] !== null
+				? $fmt_days($circuit['forecast']['days'])
+				: ($s !== null && $s['short'] ? $short_history() : I18n::t('no upward trend')),
 			$circuit['contract'] !== null ? $fmt_bps($circuit['contract']) : (new CSpan(I18n::t('not set')))->addClass('nt-cap-muted'),
 			$upgrade_text($circuit),
 			$upgrade_notes($circuit) ?: '',
@@ -1533,7 +1550,9 @@ if ($view === 'interfaces' || $focus !== '') {
 			$avg !== null && $avg >= 0 ? $fmt_pct($avg) : '—',
 			$days === null || $days < 0
 				? '—'
-				: ($days >= CapacityBuilder::DAYS_NONE ? I18n::t('no upward trend') : $fmt_days($days)),
+				: ($days >= CapacityBuilder::DAYS_NONE
+					? (CapacityBuilder::shortHistory($interface) ? $short_history() : I18n::t('no upward trend'))
+					: $fmt_days($days)),
 			$problems ?: ''
 		]);
 	}

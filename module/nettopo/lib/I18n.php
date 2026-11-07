@@ -388,6 +388,8 @@ class I18n {
 		'saturates first' => 'satura primeiro',
 		'some segment cannot carry it' => 'algum trecho não comporta',
 		'stable' => 'estável',
+		'short history' => 'histórico curto',
+		'The trend needs %1$s of data. Before that a few days would be stretched into months.' => 'A tendência precisa de %1$s de dados. Antes disso, poucos dias seriam esticados para meses.',
 		'worst' => 'pior',
 		'yes' => 'sim',
 

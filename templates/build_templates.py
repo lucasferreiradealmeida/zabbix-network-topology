@@ -18,7 +18,7 @@ VERSION = '1.0'
 # 30-day average, the monthly growth, the item tag alias and the link from the problems to the module page;
 # 1.4 gives the templates neutral names ("Template Capacity Planning ..."); 1.4.1 no longer fills the inventory
 # field "Type" (vendor templates such as Huawei's already use it, and Zabbix allows one item per field).
-CAP_VERSION = '1.6.0'
+CAP_VERSION = '1.6.1'
 
 
 def uid(path):
@@ -309,6 +309,9 @@ def capacity_base_template():
         ]
     p95_key = 'capacity.if.util.p95[{#SNMPINDEX}]'
     days_key = 'capacity.if.days_left[{#SNMPINDEX}]'
+    # 1 when the p95 has values older than {$CAPACITY.TREND.HISTORY}: a trend drawn from a few days of data is
+    # extrapolated to months (a fresh interface "grows 365% a month"), so before that there is no trend.
+    enough = '(count(//%s,{$CAPACITY.TREND.PERIOD}:now-{$CAPACITY.TREND.HISTORY})>0)' % p95_key
     # Growth of the p95 over the forecast horizon: below {$CAPACITY.TREND.MIN} points it is noise, not a trend.
     growth = '(last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//%s))' % p95_key
     # timeleft() takes a constant limit: one call per source of the limit, the unused one weighted by 0.
@@ -403,21 +406,25 @@ def capacity_base_template():
                  params='avg(//capacity.if.util[{#SNMPINDEX}],{$CAPACITY.AVG.PERIOD})'),
         cap_item(t, 'capacity.if.growth[{#SNMPINDEX}]', 'crescimento do p95 em 30 dias', 'growth',
                  'Quanto o p95 sobe em 30 dias (pontos percentuais), pela reta de tendência de '
-                 '{$CAPACITY.TREND.PERIOD}. Base do crescimento mensal e da capacidade recomendada.',
+                 '{$CAPACITY.TREND.PERIOD}. Base do crescimento mensal e da capacidade recomendada. Fica 0 até o '
+                 'p95 ter {$CAPACITY.TREND.HISTORY} de histórico.',
                  type='CALCULATED', delay='{$CAPACITY.CALC.INTERVAL}', history='400d', trends='0',
                  value_type='FLOAT', units='p.p.',
-                 params='forecast(//%s,{$CAPACITY.TREND.PERIOD},30d)-forecast(//%s,{$CAPACITY.TREND.PERIOD},0)'
-                        % (p95_key, p95_key)),
+                 params='%s*(forecast(//%s,{$CAPACITY.TREND.PERIOD},30d)-forecast(//%s,{$CAPACITY.TREND.PERIOD},0))'
+                        % (enough, p95_key, p95_key)),
         cap_item(t, 'capacity.if.util.forecast[{#SNMPINDEX}]', 'p95 previsto', 'forecast',
-                 'p95 previsto daqui a {$CAPACITY.FORECAST.HORIZON}, pela tendência de {$CAPACITY.TREND.PERIOD}.',
+                 'p95 previsto daqui a {$CAPACITY.FORECAST.HORIZON}, pela tendência de {$CAPACITY.TREND.PERIOD}. '
+                 '-1 = histórico curto: o p95 ainda não tem {$CAPACITY.TREND.HISTORY} de dados.',
                  type='CALCULATED', delay='{$CAPACITY.CALC.INTERVAL}', history='400d', trends='0',
                  value_type='FLOAT', units='%',
-                 params='forecast(//%s,{$CAPACITY.TREND.PERIOD},{$CAPACITY.FORECAST.HORIZON})' % p95_key),
+                 params='%s*max(forecast(//%s,{$CAPACITY.TREND.PERIOD},{$CAPACITY.FORECAST.HORIZON}),0)-(%s=0)'
+                        % (enough, p95_key, enough)),
         cap_item(t, days_key, 'dias até o limite crítico', 'days',
                  'Dias até o p95 chegar ao limite crítico, pela tendência de {$CAPACITY.TREND.PERIOD}. '
                  '3650 = sem tendência de alta (o p95 previsto sobe menos de {$CAPACITY.TREND.MIN} ponto(s) '
                  'percentual(is) em {$CAPACITY.FORECAST.HORIZON}); 0 = subindo e já no limite (a linha de '
-                 'tendência já passou do limite); negativo = dados insuficientes.',
+                 'tendência já passou do limite); negativo = dados insuficientes. Com histórico curto (menos de '
+                 '{$CAPACITY.TREND.HISTORY}) fica 3650.',
                  type='CALCULATED', delay='{$CAPACITY.CALC.INTERVAL}', history='400d', trends='0',
                  value_type='FLOAT', units='dias',
                  # timeleft() answers "never" (DBL_MAX) when the trend line crossed the limit in the past:
@@ -622,6 +629,9 @@ def capacity_base_template():
             {'macro': '{$CAPACITY.TREND.MIN}', 'value': '1',
              'description': 'Crescimento mínimo do p95 (pontos percentuais em {$CAPACITY.FORECAST.HORIZON}) para '
                             'considerar tendência de alta. Abaixo disso é oscilação normal.'},
+            {'macro': '{$CAPACITY.TREND.HISTORY}', 'value': '14d',
+             'description': 'Histórico mínimo do p95 antes de calcular tendência, previsão e dias até o limite. Com '
+                            'menos, poucos dias seriam esticados para meses (ex.: "+365% ao mês").'},
             {'macro': '{$CAPACITY.TREND.PERIOD}', 'value': '30d',
              'description': 'Janela da tendência usada na previsão.'},
             {'macro': '{$CAPACITY.UTIL.CRIT}', 'value': '0',

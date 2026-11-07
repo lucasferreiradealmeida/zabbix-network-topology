@@ -37,7 +37,7 @@ zabbix_export:
       onde veio o CID de cada interface: descricao, netbox ou macro.
     vendor:
       name: nettopo
-      version: 1.6.0
+      version: 1.6.1
     groups:
     - name: Templates/Capacity Planning
     items:
@@ -662,7 +662,7 @@ zabbix_export:
       - uuid: 146d1d19a7294963af48c949e5bf430a
         name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): crescimento do p95 em 30 dias'
         key: capacity.if.growth[{#SNMPINDEX}]
-        description: Quanto o p95 sobe em 30 dias (pontos percentuais), pela reta de tendência de {$CAPACITY.TREND.PERIOD}. Base do crescimento mensal e da capacidade recomendada.
+        description: Quanto o p95 sobe em 30 dias (pontos percentuais), pela reta de tendência de {$CAPACITY.TREND.PERIOD}. Base do crescimento mensal e da capacidade recomendada. Fica 0 até o p95 ter {$CAPACITY.TREND.HISTORY} de histórico.
         tags:
         - tag: alias
           value: '{#IFALIAS}'
@@ -686,11 +686,11 @@ zabbix_export:
         trends: '0'
         value_type: FLOAT
         units: p.p.
-        params: forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},30d)-forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},0)
+        params: (count(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD}:now-{$CAPACITY.TREND.HISTORY})>0)*(forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},30d)-forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},0))
       - uuid: 5c29c44ca66d4ad7846cd2d1f1d0725b
         name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): p95 previsto'
         key: capacity.if.util.forecast[{#SNMPINDEX}]
-        description: p95 previsto daqui a {$CAPACITY.FORECAST.HORIZON}, pela tendência de {$CAPACITY.TREND.PERIOD}.
+        description: 'p95 previsto daqui a {$CAPACITY.FORECAST.HORIZON}, pela tendência de {$CAPACITY.TREND.PERIOD}. -1 = histórico curto: o p95 ainda não tem {$CAPACITY.TREND.HISTORY} de dados.'
         tags:
         - tag: alias
           value: '{#IFALIAS}'
@@ -714,11 +714,11 @@ zabbix_export:
         trends: '0'
         value_type: FLOAT
         units: '%'
-        params: forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.FORECAST.HORIZON})
+        params: (count(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD}:now-{$CAPACITY.TREND.HISTORY})>0)*max(forecast(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.FORECAST.HORIZON}),0)-((count(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD}:now-{$CAPACITY.TREND.HISTORY})>0)=0)
       - uuid: c3a5229bcdd84740b9ef4c9aeecc8459
         name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): dias até o limite crítico'
         key: capacity.if.days_left[{#SNMPINDEX}]
-        description: Dias até o p95 chegar ao limite crítico, pela tendência de {$CAPACITY.TREND.PERIOD}. 3650 = sem tendência de alta (o p95 previsto sobe menos de {$CAPACITY.TREND.MIN} ponto(s) percentual(is) em {$CAPACITY.FORECAST.HORIZON}); 0 = subindo e já no limite (a linha de tendência já passou do limite); negativo = dados insuficientes.
+        description: Dias até o p95 chegar ao limite crítico, pela tendência de {$CAPACITY.TREND.PERIOD}. 3650 = sem tendência de alta (o p95 previsto sobe menos de {$CAPACITY.TREND.MIN} ponto(s) percentual(is) em {$CAPACITY.FORECAST.HORIZON}); 0 = subindo e já no limite (a linha de tendência já passou do limite); negativo = dados insuficientes. Com histórico curto (menos de {$CAPACITY.TREND.HISTORY}) fica 3650.
         tags:
         - tag: alias
           value: '{#IFALIAS}'
@@ -1496,6 +1496,9 @@ zabbix_export:
     - macro: '{$CAPACITY.TREND.MIN}'
       value: '1'
       description: Crescimento mínimo do p95 (pontos percentuais em {$CAPACITY.FORECAST.HORIZON}) para considerar tendência de alta. Abaixo disso é oscilação normal.
+    - macro: '{$CAPACITY.TREND.HISTORY}'
+      value: 14d
+      description: 'Histórico mínimo do p95 antes de calcular tendência, previsão e dias até o limite. Com menos, poucos dias seriam esticados para meses (ex.: "+365% ao mês").'
     - macro: '{$CAPACITY.TREND.PERIOD}'
       value: 30d
       description: Janela da tendência usada na previsão.
@@ -1541,7 +1544,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=backbone (limites do papel: atenção 60%, crítico 80%).
     vendor:
       name: nettopo
-      version: 1.6.0
+      version: 1.6.1
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1569,7 +1572,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=distribuicao (limites do papel: atenção 70%, crítico 85%).
     vendor:
       name: nettopo
-      version: 1.6.0
+      version: 1.6.1
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1597,7 +1600,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=cpe (limites do papel: atenção 80%, crítico 95%).
     vendor:
       name: nettopo
-      version: 1.6.0
+      version: 1.6.1
     templates:
     - name: Template Capacity Planning
     groups:
