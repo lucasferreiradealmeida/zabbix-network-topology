@@ -37,7 +37,7 @@ zabbix_export:
       onde veio o CID de cada interface: descricao, netbox ou macro.
     vendor:
       name: nettopo
-      version: 1.6.1
+      version: 1.6.2
     groups:
     - name: Templates/Capacity Planning
     items:
@@ -335,8 +335,8 @@ zabbix_export:
       delay: '0'
       lifetime_type: DELETE_AFTER
       lifetime: '{$CAPACITY.LOST.KEEP}'
-      enabled_lifetime_type: DISABLE_NEVER
-      description: Uma entidade por interface com CID ou palavra de enlace compartilhado na descrição.
+      enabled_lifetime_type: DISABLE_IMMEDIATELY
+      description: Uma entidade por interface com CID ou palavra de enlace compartilhado na descrição. Interface que sai do capacity planning é desativada na hora (para de alertar) e apagada depois de {$CAPACITY.LOST.KEEP}.
       item_prototypes:
       - uuid: e6c6092d02cb4247ae918c7e0ab84e30
         name: 'Capacidade {#IFNAME} ({#CIRCUIT_LABEL}): tráfego de entrada'
@@ -1544,7 +1544,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=backbone (limites do papel: atenção 60%, crítico 80%).
     vendor:
       name: nettopo
-      version: 1.6.1
+      version: 1.6.2
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1572,7 +1572,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=distribuicao (limites do papel: atenção 70%, crítico 85%).
     vendor:
       name: nettopo
-      version: 1.6.1
+      version: 1.6.2
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1600,7 +1600,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=cpe (limites do papel: atenção 80%, crítico 95%).
     vendor:
       name: nettopo
-      version: 1.6.1
+      version: 1.6.2
     templates:
     - name: Template Capacity Planning
     groups:

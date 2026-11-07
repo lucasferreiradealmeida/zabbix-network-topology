@@ -51,8 +51,8 @@ class I18n {
 		'Loading topology...' => 'Carregando topologia...',
 		'Cannot load topology data.' => 'Não foi possível carregar os dados da topologia.',
 		'No hosts match the filter.' => 'Nenhum host corresponde ao filtro.',
-		'No links found. Link the template "Network Topology LLDP by SNMP" to your devices, use host tags or select maps in the filter.' =>
-			'Nenhum link encontrado. Vincule o template "Network Topology LLDP by SNMP" aos equipamentos, use tags de host ou selecione mapas no filtro.',
+		'No links found. Check the link sources in the filter (IP addresses /30, /31 need "Template Capacity Planning"; LLDP needs "Network Topology LLDP by SNMP"), use host tags or select maps.' =>
+			'Nenhum link encontrado. Confira as fontes dos links no filtro (Endereços IP /30, /31 precisam do "Template Capacity Planning"; LLDP precisa do "Network Topology LLDP by SNMP"), use tags de host ou selecione mapas.',
 		'Only the first %1$s hosts are shown. Narrow down the filter.' =>
 			'Apenas os primeiros %1$s hosts são exibidos. Refine o filtro.',
 		'%1$s hosts have the LLDP/CDP template but no neighbor data yet: %2$s' =>

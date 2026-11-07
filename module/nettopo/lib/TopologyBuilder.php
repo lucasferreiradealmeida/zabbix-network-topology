@@ -142,7 +142,7 @@ class TopologyBuilder {
 		}
 
 		if (!$this->edges) {
-			$this->warnings[] = I18n::t('No links found. Link the template "Network Topology LLDP by SNMP" to your devices, use host tags or select maps in the filter.');
+			$this->warnings[] = I18n::t('No links found. Check the link sources in the filter (IP addresses /30, /31 need "Template Capacity Planning"; LLDP needs "Network Topology LLDP by SNMP"), use host tags or select maps.');
 		}
 
 		return $this->result();
@@ -1174,7 +1174,7 @@ class TopologyBuilder {
 		$ports = [];
 
 		foreach ($this->edges as $edge) {
-			if (!in_array($edge['origin'], ['lldp', 'cdp', 'tag'], true)) {
+			if (!in_array($edge['origin'], ['lldp', 'cdp', 'ip', 'tag'], true)) {
 				continue;
 			}
 
@@ -1348,7 +1348,8 @@ class TopologyBuilder {
 			}
 		}
 
-		// 2) Item tag "interface" (templates with other keys, Zabbix agent interfaces...).
+		// 2) Item tag "interface" (templates with other keys, Zabbix agent interfaces...), and at last the items of
+		// the capacity planning template (capacity.if.*), which also measure logical interfaces (VLANs, units).
 		$by_name = [];
 
 		foreach ($ports as $port_key => $port) {
@@ -1385,9 +1386,17 @@ class TopologyBuilder {
 				foreach ($items as $item) {
 					$kind = null;
 
+					$priority = 99;
+
 					foreach ($kinds as $candidate) {
 						if (strncmp($item['key_'], 'net.if.'.$candidate.'[', strlen('net.if.'.$candidate.'[')) == 0) {
 							$kind = $candidate;
+							break;
+						}
+
+						if (strncmp($item['key_'], 'capacity.if.'.$candidate.'[', strlen('capacity.if.'.$candidate.'[')) == 0) {
+							$kind = $candidate;
+							$priority = 100;
 							break;
 						}
 					}
@@ -1401,8 +1410,9 @@ class TopologyBuilder {
 							? ($by_name[(string) $item['hostid']][$tag['value']] ?? null)
 							: null;
 
-						if ($port_key !== null && !isset($result[$port_key][$kind])) {
-							$result[$port_key][$kind] = $item + ['priority' => 99];
+						if ($port_key !== null
+								&& (!isset($result[$port_key][$kind]) || $result[$port_key][$kind]['priority'] > $priority)) {
+							$result[$port_key][$kind] = $item + ['priority' => $priority];
 						}
 					}
 				}

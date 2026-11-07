@@ -1,5 +1,15 @@
 # Mudanças
 
+## 1.6.2
+
+- Mapa: os links achados pelos **endereços IP** mostram o status e o tráfego das portas. Quando o template de
+  interfaces do fabricante não mede a interface lógica (VLAN, subinterface), os itens do capacity planning
+  são usados.
+- O aviso "Nenhum link encontrado" fala das fontes do filtro (endereços IP e LLDP), não só do LLDP.
+- Capacity: uma interface que sai do capacity planning (descrição mudou, enlace excluído) é **desativada na
+  hora**, com os triggers dela. Antes ela continuava ativa por 30 dias e, depois da 1.6.0, podia abrir um
+  problema falso "p95 acima de 0%". Volta ativa sozinha se for descoberta de novo.
+
 ## 1.6.1
 
 - **Tendência só com histórico suficiente.** Com poucos dias de dados, a reta de tendência era esticada para

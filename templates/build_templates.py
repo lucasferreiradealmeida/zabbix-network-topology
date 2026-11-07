@@ -18,7 +18,7 @@ VERSION = '1.0'
 # 30-day average, the monthly growth, the item tag alias and the link from the problems to the module page;
 # 1.4 gives the templates neutral names ("Template Capacity Planning ..."); 1.4.1 no longer fills the inventory
 # field "Type" (vendor templates such as Huawei's already use it, and Zabbix allows one item per field).
-CAP_VERSION = '1.6.1'
+CAP_VERSION = '1.6.2'
 
 
 def uid(path):
@@ -526,8 +526,12 @@ def capacity_base_template():
                 'delay': '0',
                 'lifetime_type': 'DELETE_AFTER',
                 'lifetime': '{$CAPACITY.LOST.KEEP}',
-                'enabled_lifetime_type': 'DISABLE_NEVER',
-                'description': 'Uma entidade por interface com CID ou palavra de enlace compartilhado na descrição.',
+                # An interface that left capacity planning (description changed, link excluded) stops alerting at
+                # once; it comes back enabled if it is discovered again.
+                'enabled_lifetime_type': 'DISABLE_IMMEDIATELY',
+                'description': 'Uma entidade por interface com CID ou palavra de enlace compartilhado na descrição. '
+                               'Interface que sai do capacity planning é desativada na hora (para de alertar) e '
+                               'apagada depois de {$CAPACITY.LOST.KEEP}.',
                 'item_prototypes': item_prototypes,
                 'trigger_prototypes': [
                     {
