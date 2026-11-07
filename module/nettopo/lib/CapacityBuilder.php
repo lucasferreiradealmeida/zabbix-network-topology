@@ -1140,7 +1140,8 @@ class CapacityBuilder {
 	public static function shortHistory(array $interface): bool {
 		$forecast = $interface['values']['forecast'] ?? null;
 
-		return $forecast !== null && $forecast <= -1 && !isset($interface['errors']['forecast']);
+		// Exactly -1: older templates could write any negative forecast (a falling trend).
+		return $forecast !== null && abs($forecast + 1) < 0.0001 && !isset($interface['errors']['forecast']);
 	}
 
 	/**
@@ -1664,6 +1665,22 @@ class CapacityBuilder {
 	 * What is left of an interface description without the circuit IDs and the words about the port itself.
 	 */
 	public static function siteFromAlias(string $alias, array $cids): string {
+		// Descriptions written as a record ("T:INF|O:SITE-A|B:1G|C:..." or "Site A|BORDER|100M|EVC_ID#1"): the
+		// organization field (O:) or else the first field names the site.
+		$fields = array_map('trim', explode('|', $alias));
+
+		if (count($fields) > 1) {
+			foreach ($fields as $field) {
+				if (preg_match('/^O\s*[:=]\s*(.+)$/i', $field, $m)) {
+					return mb_substr(trim($m[1]), 0, 60);
+				}
+			}
+
+			if (!preg_match('/^[A-Z]{1,3}\s*[:=]/i', $fields[0])) {
+				$alias = $fields[0];
+			}
+		}
+
 		$text = $alias;
 
 		foreach ($cids as $cid) {

@@ -18,7 +18,7 @@ VERSION = '1.0'
 # 30-day average, the monthly growth, the item tag alias and the link from the problems to the module page;
 # 1.4 gives the templates neutral names ("Template Capacity Planning ..."); 1.4.1 no longer fills the inventory
 # field "Type" (vendor templates such as Huawei's already use it, and Zabbix allows one item per field).
-CAP_VERSION = '1.6.2'
+CAP_VERSION = '1.6.3'
 
 
 def uid(path):
@@ -552,9 +552,9 @@ def capacity_base_template():
                 ],
                 'master_item': {'key': 'capacity.if.walk'},
                 'preprocessing': [
+                    # No "discard unchanged": every walk (hourly, or "Execute now") applies the template and the
+                    # description changes to the discovered items at once.
                     {'type': 'JAVASCRIPT', 'parameters': [Literal(js('capacity_lld.js'))]},
-                    # Template changes reach the discovered items within the hour.
-                    {'type': 'DISCARD_UNCHANGED_HEARTBEAT', 'parameters': ['1h']},
                 ],
             },
         ],

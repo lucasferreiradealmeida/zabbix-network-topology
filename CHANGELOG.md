@@ -1,5 +1,15 @@
 # Mudanças
 
+## 1.6.3
+
+- **Mudanças valem na hora:** a descoberta de capacity não descarta mais o resultado igual por 1 hora. "Executar
+  agora" (ou a coleta de cada hora) aplica na hora as fórmulas novas do template e as mudanças de descrição. Antes,
+  depois de importar o template, um equipamento podia ficar até 2 horas com as fórmulas antigas.
+- **Cliente / site legível:** em descrições em ficha, o módulo mostra o campo `O:` (`T:INF|O:SITE-A|...` → `SITE-A`)
+  ou o primeiro campo (`Site A|BORDER|100M|EVC_ID#1` → `Site A`), em vez da descrição inteira.
+- "Histórico curto" só com o -1 exato que o template escreve: uma previsão negativa de um template antigo (tendência
+  de queda) não aparece mais como histórico curto.
+
 ## 1.6.2
 
 - Mapa: os links achados pelos **endereços IP** mostram o status e o tráfego das portas. Quando o template de

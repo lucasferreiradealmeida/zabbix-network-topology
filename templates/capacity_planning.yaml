@@ -37,7 +37,7 @@ zabbix_export:
       onde veio o CID de cada interface: descricao, netbox ou macro.
     vendor:
       name: nettopo
-      version: 1.6.2
+      version: 1.6.3
     groups:
     - name: Templates/Capacity Planning
     items:
@@ -1394,9 +1394,6 @@ zabbix_export:
           });
 
           return JSON.stringify(rows);
-      - type: DISCARD_UNCHANGED_HEARTBEAT
-        parameters:
-        - 1h
     tags:
     - tag: class
       value: network
@@ -1544,7 +1541,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=backbone (limites do papel: atenção 60%, crítico 80%).
     vendor:
       name: nettopo
-      version: 1.6.2
+      version: 1.6.3
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1572,7 +1569,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=distribuicao (limites do papel: atenção 70%, crítico 85%).
     vendor:
       name: nettopo
-      version: 1.6.2
+      version: 1.6.3
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1600,7 +1597,7 @@ zabbix_export:
       {$CAPACITY.SEGMENT}=cpe (limites do papel: atenção 80%, crítico 95%).
     vendor:
       name: nettopo
-      version: 1.6.2
+      version: 1.6.3
     templates:
     - name: Template Capacity Planning
     groups:
