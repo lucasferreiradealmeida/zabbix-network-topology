@@ -28,6 +28,7 @@ if ($web_layout_mode == ZBX_LAYOUT_NORMAL) {
 	$source_options = [
 		['label' => I18n::t('LLDP'), 'value' => 'lldp'],
 		['label' => I18n::t('CDP'), 'value' => 'cdp'],
+		['label' => I18n::t('IP addresses (/30, /31)'), 'value' => 'ip'],
 		['label' => I18n::t('Host tags'), 'value' => 'tags'],
 		['label' => I18n::t('Trigger dependencies'), 'value' => 'deps']
 	];

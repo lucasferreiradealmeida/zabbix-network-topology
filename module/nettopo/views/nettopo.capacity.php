@@ -217,7 +217,7 @@ $coverage_tag = static function(array $circuit): CSpan {
 	return (new CSpan(array_merge(['CID '], $items)))
 		->addClass('nt-cap-cov')
 		->setTitle($missing
-			? I18n::t('The circuit ID is missing on: %1$s (found by LLDP/CDP or not monitored).',
+			? I18n::t('The circuit ID is missing on: %1$s (found by neighbor links or not monitored).',
 				implode(', ', array_map(static fn($r) => $labels[$r], $missing)))
 			: I18n::t('The circuit ID is written on the three roles.'));
 };
@@ -490,7 +490,7 @@ if ($data['circuit'] !== '') {
 	$path->addItem(
 		(new CDiv([
 			(new CDiv(I18n::t('Client')))->addClass('nt-cap-card-title'),
-			$client ?: (new CDiv(I18n::t('Not identified (no LLDP/CDP neighbor on the client port).')))->addClass('nt-cap-small')
+			$client ?: (new CDiv(I18n::t('Not identified (no neighbor link on the client port).')))->addClass('nt-cap-small')
 		]))->addClass('nt-cap-card')->addClass('nt-cap-card-client')
 	);
 
@@ -506,7 +506,7 @@ if ($data['circuit'] !== '') {
 			$rows[] = (new CDiv([
 				(new CDiv([
 					(new CSpan($interface['host']))->addClass('nt-cap-strong'),
-					$inferred ? (new CSpan(I18n::t('found by LLDP/CDP')))->addClass('nt-cap-tag') : null
+					$inferred ? (new CSpan(I18n::t('found by neighbor links')))->addClass('nt-cap-tag') : null
 				])),
 				(new CDiv([
 					$interface['name'],
@@ -904,7 +904,7 @@ if ($data['circuit'] !== '') {
 				],
 				in_array($cid, $interface['cids'], true)
 					? ($source_names[$interface['cid_source']] ?? $source_names['descricao'])
-					: (new CSpan($interface['shared'] ? '—' : I18n::t('found by LLDP/CDP')))->addClass('nt-cap-muted'),
+					: (new CSpan($interface['shared'] ? '—' : I18n::t('found by neighbor links')))->addClass('nt-cap-muted'),
 				array_key_exists('status', $v)
 					? (CapacityBuilder::isDown($interface)
 						? (new CSpan('down'))->addClass(ZBX_STYLE_RED)

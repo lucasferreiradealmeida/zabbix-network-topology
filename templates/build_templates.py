@@ -18,7 +18,7 @@ VERSION = '1.0'
 # 30-day average, the monthly growth, the item tag alias and the link from the problems to the module page;
 # 1.4 gives the templates neutral names ("Template Capacity Planning ..."); 1.4.1 no longer fills the inventory
 # field "Type" (vendor templates such as Huawei's already use it, and Zabbix allows one item per field).
-CAP_VERSION = '1.5.1'
+CAP_VERSION = '1.6.0'
 
 
 def uid(path):
@@ -233,10 +233,13 @@ CAP_WALK_OIDS = [
     '1.3.6.1.2.1.31.1.1.1.15',  # ifHighSpeed
     '1.3.6.1.2.1.2.2.1.2',      # ifDescr
     '1.3.6.1.2.1.1.5',          # sysName
+    '1.3.6.1.2.1.4.20.1.2',     # ipAdEntIfIndex (IPv4 address -> interface)
+    '1.3.6.1.2.1.4.20.1.3',     # ipAdEntNetMask
 ]
 
 CAP_SEGMENT_JS = r"""// Role of the device for capacity planning.
-var v = String('{$CAPACITY.SEGMENT}').toLowerCase()
+var raw = String('{$CAPACITY.SEGMENT}');
+var v = raw.toLowerCase()
     .replace(/[à-å]/g, 'a').replace(/ç/g, 'c').replace(/[è-ë]/g, 'e')
     .replace(/[ì-ï]/g, 'i').replace(/[ò-ö]/g, 'o').replace(/[ù-ü]/g, 'u');
 
@@ -248,6 +251,11 @@ if (/^(distribuicao|distribution|metro|agregacao|aggregation)$/.test(v)) {
 }
 if (/^(cpe|acesso|access|cliente|customer)$/.test(v)) {
     return 'CPE';
+}
+
+// Empty (or "auto"): the discovery finds the role from the data (core trunks, number of circuits).
+if (raw === '' || raw.indexOf('{$') === 0 || /^(auto|automatico)$/.test(v)) {
+    return 'Automático';
 }
 
 return 'Indefinido';
@@ -279,8 +287,12 @@ def cap_item(t, key, name, metric, description, **fields):
 def capacity_base_template():
     t = CAP_BASE
     ref = '/' + t + '/'
-    crit = '{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}'
-    warn = '{$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"}'
+    crit_macro = '{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}'
+    warn_macro = '{$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"}'
+    # Limit in force: {$CAPACITY.UTIL.CRIT} (by circuit, host or global) when it is not 0, else the limit of the
+    # role found by the discovery ({#UTIL_CRIT}). Constant arithmetic, valid in trigger expressions.
+    crit = '((%s=0)*{#UTIL_CRIT}+%s)' % (crit_macro, crit_macro)
+    warn = '((%s=0)*{#UTIL_WARN}+%s)' % (warn_macro, warn_macro)
     bw = '{$CAPACITY.BW.MBPS:"{#BW_KEY}"}'
     # Problem -> circuit: the module page finds the interface by host and SNMP index (one circuit: its detail).
     url = 'zabbix.php?action=nettopo.capacity&hostid={HOST.ID}&snmpindex={#SNMPINDEX}'
@@ -299,8 +311,11 @@ def capacity_base_template():
     days_key = 'capacity.if.days_left[{#SNMPINDEX}]'
     # Growth of the p95 over the forecast horizon: below {$CAPACITY.TREND.MIN} points it is noise, not a trend.
     growth = '(last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//%s))' % p95_key
-    days_expr = '(timeleft(//%s,{$CAPACITY.TREND.PERIOD},%s)/86400)' % (p95_key, crit)
-    high_name = 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de %s%%' % crit
+    # timeleft() takes a constant limit: one call per source of the limit, the unused one weighted by 0.
+    days_expr = ('((%s=0)*timeleft(//%s,{$CAPACITY.TREND.PERIOD},{#UTIL_CRIT})/86400'
+                 '+(%s>0)*timeleft(//%s,{$CAPACITY.TREND.PERIOD},%s)/86400)'
+                 % (crit_macro, p95_key, crit_macro, p95_key, crit_macro))
+    high_name = 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima do limite crítico'
     high_expr = 'last(%s%s)>=%s' % (ref, p95_key, crit)
 
     item_prototypes = [
@@ -354,19 +369,23 @@ def capacity_base_template():
                          'url': url,
                          'url_name': url_name,
                          'priority': 'HIGH',
-                         'description': 'O p95 de utilização passou do limite crítico do papel do equipamento. '
-                                        'Limite por circuito: {$CAPACITY.UTIL.CRIT:"CIRCUIT_ID"}.',
+                         'description': 'O p95 de utilização passou do limite crítico: o do papel do equipamento '
+                                        '({#SEGMENT_LABEL}: {#UTIL_CRIT}%), ou {$CAPACITY.UTIL.CRIT} quando '
+                                        'definido (por circuito: {$CAPACITY.UTIL.CRIT:"CIRCUIT_ID"}).',
                          'tags': trigger_tags('p95'),
                      },
                      {
                          'uuid': uid(t + '/trigger/p95.warn'),
                          'expression': 'last(%s%s)>=%s' % (ref, p95_key, warn),
-                         'name': 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de %s%%' % warn,
+                         'name': 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima do '
+                                 'limite de atenção',
                          'opdata': 'p95: {ITEM.LASTVALUE1}',
                          'url': url,
                          'url_name': url_name,
                          'priority': 'WARNING',
-                         'description': 'O p95 de utilização passou do limite de atenção. Hora de planejar aumento.',
+                         'description': 'O p95 de utilização passou do limite de atenção ({#SEGMENT_LABEL}: '
+                                        '{#UTIL_WARN}%, ou {$CAPACITY.UTIL.WARN} quando definido). Hora de planejar '
+                                        'aumento.',
                          'dependencies': [{'name': high_name, 'expression': high_expr}],
                          'tags': trigger_tags('p95'),
                      },
@@ -412,8 +431,11 @@ def capacity_base_template():
         'template': t,
         'name': t,
         'description': Literal(
-            'Capacity planning - camada 1 (template base). Não vincule este template direto: use um dos perfis\n'
-            '"%s - Backbone", "- Distribuicao" ou "- CPE", que o incluem.\n\n'
+            'Capacity planning - camada 1 (template base). Pode ser vinculado direto a todos os roteadores (por exemplo\n'
+            'dentro de um template que todos já usam): o papel de cada um é descoberto pelos dados. Quem tem tronco\n'
+            'com o campo CORE na descrição é backbone; quem agrega {$CAPACITY.ROLE.DIST.MIN} ou mais circuitos é\n'
+            'distribuição; quem tem menos é CPE. Os perfis "%s - Backbone", "- Distribuicao" e "- CPE" (ou a macro\n'
+            '{$CAPACITY.SEGMENT} no host) forçam um papel nas exceções.\n\n'
             'Descobre as interfaces cuja descrição (ifAlias) tem o identificador do circuito, por exemplo\n'
             '"CID:NET-TO-0001" (vários circuitos: "CID:NET-TO-0001,NET-TO-0002"; a palavra antes do separador é\n'
             '{$CAPACITY.CID.PREFIX}, que aceita lista: CID,EVC_ID lê "EVC_ID#40137877"), ou uma palavra de enlace\n'
@@ -422,6 +444,8 @@ def capacity_base_template():
             'capacidade da interface (também com chave: "B:1G"). Para cada uma coleta tráfego, capacidade, utilização, p95,\n'
             'pico de 24h, média de 30 dias, crescimento mensal e a previsão de saturação, com as tags circuit,\n'
             'segment, link, interface e alias. Os problemas trazem um link para o circuito no módulo.\n'
+            'Nos backbones descobre também as interfaces com IP /30 ou /31 (tag link=p2p): são a ponta do core dos\n'
+            'enlaces com as distribuições, que o módulo acha pelos endereços (item capacity.ip.p2p), sem LLDP/CDP.\n'
             'O módulo "Network Topology" usa essas tags para montar o caminho de cada circuito e apontar o gargalo.\n\n'
             'Opcional: com {$CAPACITY.NETBOX.URL} preenchido, interfaces sem CID na descrição buscam o CID\n'
             'no NetBox (campo personalizado {$CAPACITY.NETBOX.FIELD} da interface ou a descrição dela).\n\n'
@@ -443,7 +467,27 @@ def capacity_base_template():
                 'delay': '{$CAPACITY.LLD.INTERVAL}',
                 'history': '0',
                 'value_type': 'TEXT',
-                'description': 'ifName, ifAlias, ifHighSpeed, ifDescr e sysName. Não é guardado: alimenta a descoberta.',
+                'description': 'ifName, ifAlias, ifHighSpeed, ifDescr, sysName e os endereços IPv4 (IP-MIB). Não é '
+                               'guardado: alimenta a descoberta.',
+                'tags': [{'tag': 'component', 'value': 'capacity'}],
+            },
+            {
+                'uuid': uid(t + '/capacity.ip.p2p'),
+                'name': 'Capacidade: endereços ponto a ponto',
+                'type': 'DEPENDENT',
+                'key': 'capacity.ip.p2p',
+                'delay': '0',
+                'history': '1d',
+                'value_type': 'TEXT',
+                'description': 'Endereços IPv4 /30 e /31 do equipamento e a interface de cada um (IP-MIB). O módulo '
+                               'liga duas interfaces de equipamentos diferentes que estão no mesmo /30 ou /31: '
+                               'descobre quem liga em quem sem LLDP/CDP.',
+                'preprocessing': [
+                    {'type': 'JAVASCRIPT', 'parameters': [Literal(js('capacity_ip.js'))]},
+                    # The module reads the last value of the last 24 hours.
+                    {'type': 'DISCARD_UNCHANGED_HEARTBEAT', 'parameters': ['6h']},
+                ],
+                'master_item': {'key': 'capacity.if.walk'},
                 'tags': [{'tag': 'component', 'value': 'capacity'}],
             },
             {
@@ -454,7 +498,8 @@ def capacity_base_template():
                 'delay': '0',
                 'history': '7d',
                 'value_type': 'CHAR',
-                'description': 'Backbone, Distribuição ou CPE ({$CAPACITY.SEGMENT}, definido pelo template de perfil).',
+                'description': 'Backbone, Distribuição ou CPE quando {$CAPACITY.SEGMENT} está definido (perfil ou '
+                               'host); "Automático" quando a descoberta acha o papel pelos dados.',
                 'preprocessing': [
                     {'type': 'JAVASCRIPT', 'parameters': [Literal(CAP_SEGMENT_JS)]},
                     {'type': 'DISCARD_UNCHANGED_HEARTBEAT', 'parameters': ['1d']},
@@ -480,8 +525,8 @@ def capacity_base_template():
                         'uuid': uid(t + '/trigger/forecast'),
                         'expression': 'last(%s%s)>=0 and last(%s%s)<{$CAPACITY.FORECAST.DAYS} and last(%s%s)<%s'
                                       % (ref, days_key, ref, days_key, ref, p95_key, crit),
-                        'name': 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) deve chegar a %s%% '
-                                'em menos de {$CAPACITY.FORECAST.DAYS} dias' % crit,
+                        'name': 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) deve chegar ao limite '
+                                'crítico em menos de {$CAPACITY.FORECAST.DAYS} dias',
                         'opdata': 'Faltam {ITEM.LASTVALUE1}',
                         'url': url,
                         'url_name': url_name,
@@ -534,10 +579,42 @@ def capacity_base_template():
              'description': 'Token da API do NetBox ("Bearer nbt_..." para tokens v2).'},
             {'macro': '{$CAPACITY.NETBOX.URL}', 'value': '',
              'description': 'Opcional: URL do NetBox (ex.: https://netbox.exemplo). Vazio = só a descrição da interface.'},
+            {'macro': '{$CAPACITY.P2P.PREFIX}', 'value': '30',
+             'description': 'Máscara mínima de um enlace ponto a ponto: 30 = /30 e /31; 31 = só /31.'},
+            {'macro': '{$CAPACITY.P2P.ROLES}', 'value': 'backbone',
+             'description': 'Papéis em que as interfaces com IP ponto a ponto (sem circuito) também são descobertas, '
+                            'separados por vírgula (backbone, distribuicao, cpe). No backbone elas são a ponta do core '
+                            'dos enlaces com as distribuições.'},
             {'macro': '{$CAPACITY.P95.PERIOD}', 'value': '7d',
              'description': 'Janela do percentil 95.'},
+            {'macro': '{$CAPACITY.ROLE.BACKBONE.FIELDS}', 'value': 'CORE',
+             'description': 'Papel automático: o equipamento com uma interface com um destes campos inteiros na '
+                            'descrição ("nome|CORE|100G|...") é backbone.'},
+            {'macro': '{$CAPACITY.ROLE.CRIT}', 'value': '90',
+             'description': 'Limite crítico (%) de um equipamento sem papel.'},
+            {'macro': '{$CAPACITY.ROLE.CRIT:"backbone"}', 'value': '80',
+             'description': 'Limite crítico (%) do backbone.'},
+            {'macro': '{$CAPACITY.ROLE.CRIT:"cpe"}', 'value': '95',
+             'description': 'Limite crítico (%) do CPE.'},
+            {'macro': '{$CAPACITY.ROLE.CRIT:"distribuicao"}', 'value': '85',
+             'description': 'Limite crítico (%) da distribuição.'},
+            {'macro': '{$CAPACITY.ROLE.DIST.MIN}', 'value': '2',
+             'description': 'Papel automático: com este número de circuitos ou mais (e sem tronco CORE) o equipamento '
+                            'é distribuição; com menos, CPE.'},
+            {'macro': '{$CAPACITY.ROLE.WARN}', 'value': '70',
+             'description': 'Limite de atenção (%) de um equipamento sem papel.'},
+            {'macro': '{$CAPACITY.ROLE.WARN:"backbone"}', 'value': '60',
+             'description': 'Limite de atenção (%) do backbone.'},
+            {'macro': '{$CAPACITY.ROLE.WARN:"cpe"}', 'value': '80',
+             'description': 'Limite de atenção (%) do CPE.'},
+            {'macro': '{$CAPACITY.ROLE.WARN:"distribuicao"}', 'value': '70',
+             'description': 'Limite de atenção (%) da distribuição.'},
             {'macro': '{$CAPACITY.SEGMENT}', 'value': '',
-             'description': 'Papel do equipamento: backbone, distribuicao ou cpe (definido pelo template de perfil).'},
+             'description': 'Papel do equipamento: backbone, distribuicao ou cpe. Vazio = automático (pelos dados). '
+                            'Os perfis definem; no host, corrige uma exceção.'},
+            {'macro': '{$CAPACITY.SHARED.EXCLUDE}', 'value': '',
+             'description': 'Palavras que tiram um enlace do capacity planning (ex.: TEMPORARIO,BACKUP): ele não '
+                            'entra como tronco, uplink nem ponto a ponto. Vale como macro global para a rede toda.'},
             {'macro': '{$CAPACITY.SHARED.FIELDS}', 'value': 'CORE',
              'description': 'Campos inteiros (separados por "|") que marcam um enlace compartilhado: '
                             '"nome|CORE|100G|operadora" é compartilhado, "CORE-RJ-01_CORE-SP-01" não.'},
@@ -548,10 +625,12 @@ def capacity_base_template():
                             'considerar tendência de alta. Abaixo disso é oscilação normal.'},
             {'macro': '{$CAPACITY.TREND.PERIOD}', 'value': '30d',
              'description': 'Janela da tendência usada na previsão.'},
-            {'macro': '{$CAPACITY.UTIL.CRIT}', 'value': '90',
-             'description': 'Limite crítico de utilização (%). Os perfis mudam o padrão; contexto por circuito aceito.'},
-            {'macro': '{$CAPACITY.UTIL.WARN}', 'value': '70',
-             'description': 'Limite de atenção de utilização (%). Os perfis mudam o padrão; contexto por circuito aceito.'},
+            {'macro': '{$CAPACITY.UTIL.CRIT}', 'value': '0',
+             'description': 'Limite crítico de utilização (%). 0 = o do papel ({$CAPACITY.ROLE.CRIT:"<papel>"}). '
+                            'Contexto por circuito aceito: {$CAPACITY.UTIL.CRIT:"NET-TO-0001"}=90.'},
+            {'macro': '{$CAPACITY.UTIL.WARN}', 'value': '0',
+             'description': 'Limite de atenção de utilização (%). 0 = o do papel ({$CAPACITY.ROLE.WARN:"<papel>"}). '
+                            'Contexto por circuito aceito: {$CAPACITY.UTIL.WARN:"NET-TO-0001"}=80.'},
             {'macro': '{$CIRCUIT_ID}', 'value': '',
              'description': 'Opcional, no host: circuito(s) do equipamento inteiro (ex.: NET-RJ-0005), para CPEs sem '
                             'CID na descrição da interface. Vai para as interfaces escolhidas por {$CIRCUIT_ID.IF}.'},
@@ -580,8 +659,9 @@ def capacity_role_template(suffix, segment, warn, crit, description):
         'name': t,
         'description': Literal(
             'Capacity planning - camada 2 (perfil %s).\n%s\n\n'
-            'Vincule este template aos equipamentos desse papel. Ele inclui o template base e define\n'
-            '{$CAPACITY.SEGMENT}=%s e os limites de utilização do papel (atenção %s%%, crítico %s%%).\n'
+            'Opcional: o template base acha o papel sozinho. Use este perfil só para forçar o papel de um\n'
+            'equipamento que a regra automática classifica errado. Ele inclui o template base e define\n'
+            '{$CAPACITY.SEGMENT}=%s (limites do papel: atenção %s%%, crítico %s%%).\n'
             % (suffix, description, segment, warn, crit)
         ),
         'vendor': {'name': 'nettopo', 'version': CAP_VERSION},
@@ -591,8 +671,6 @@ def capacity_role_template(suffix, segment, warn, crit, description):
                  {'tag': 'segment', 'value': segment}],
         'macros': [
             {'macro': '{$CAPACITY.SEGMENT}', 'value': segment, 'description': 'Papel do equipamento.'},
-            {'macro': '{$CAPACITY.UTIL.CRIT}', 'value': crit, 'description': 'Limite crítico do papel (%).'},
-            {'macro': '{$CAPACITY.UTIL.WARN}', 'value': warn, 'description': 'Limite de atenção do papel (%).'},
         ],
     }
 

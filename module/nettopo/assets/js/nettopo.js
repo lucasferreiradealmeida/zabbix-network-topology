@@ -3821,7 +3821,8 @@
 			const t = (s) => this.t(s);
 			const src = this.nodeIndex[d.source] || {name: d.source};
 			const tgt = this.nodeIndex[d.target] || {name: d.target};
-			const origins = {lldp: 'LLDP', cdp: 'CDP', tag: t('Host tag'), map: t('Map link'), dep: t('Dependency')};
+			const origins = {lldp: 'LLDP', cdp: 'CDP', ip: t('IP addresses (/30, /31)'), tag: t('Host tag'), map: t('Map link'),
+				dep: t('Dependency')};
 			const statusText = d.lost
 				? t('Lost (neighbor no longer seen)')
 				: ({up: t('Up'), down: t('Down'), unknown: t('No port status'), logical: t('Dependency (logical)')}[d.status]

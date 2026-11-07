@@ -19,7 +19,10 @@ use API,
 
 class TopologyBuilder {
 
-	public const SOURCES = ['lldp', 'cdp', 'tags', 'deps'];
+	public const SOURCES = ['lldp', 'cdp', 'ip', 'tags', 'deps'];
+
+	/** Item of the capacity planning template with the /30 and /31 addresses of a host (JSON). */
+	public const IP_KEY = 'capacity.ip.p2p';
 
 	public const TAG_LINK = 'topology.link';
 	public const TAG_TYPE = 'topology.type';
@@ -109,6 +112,10 @@ class TopologyBuilder {
 			$this->addNeighborEdges($reports);
 		}
 
+		if (in_array('ip', $this->options['sources'], true)) {
+			$this->addIpEdges(true);
+		}
+
 		if (in_array('tags', $this->options['sources'], true)) {
 			$this->addTagEdges();
 		}
@@ -142,7 +149,7 @@ class TopologyBuilder {
 	}
 
 	/**
-	 * Only the physical links (LLDP, CDP and "topology.link" tags) between the selected hosts and their
+	 * Only the links (LLDP, CDP, point-to-point addresses and "topology.link" tags) between the selected hosts and their
 	 * neighbors, without problems, port status or traffic. Used by the capacity planning page.
 	 *
 	 * @return array  list of ['source_hostid', 'target_hostid' (null = not a Zabbix host), 'source_port',
@@ -166,6 +173,7 @@ class TopologyBuilder {
 			$this->addNeighborEdges($reports);
 		}
 
+		$this->addIpEdges(false);
 		$this->addTagEdges();
 		$this->loadMissingHosts();
 
@@ -675,6 +683,105 @@ class TopologyBuilder {
 	 * Host tags, maps, dependencies
 	 * ---------------------------------------------------------------------------------------------
 	 */
+
+	/**
+	 * Point-to-point IPv4 links: the two interfaces of one /30 or /31 seen on two different hosts (item
+	 * "capacity.ip.p2p" of the capacity planning template). Needs no LLDP/CDP. A subnet seen more than twice
+	 * (the same private range reused in two places) is ambiguous and ignored.
+	 *
+	 * @param bool $skip_neighbors  Skip host pairs already linked by LLDP/CDP: the map shows the physical link once.
+	 */
+	private function addIpEdges(bool $skip_neighbors): void {
+		$items = API::Item()->get([
+			'output' => ['itemid', 'hostid', 'lastvalue'],
+			'filter' => ['key_' => self::IP_KEY],
+			'monitored' => true
+		]);
+
+		$subnets = [];
+
+		foreach ($items as $item) {
+			$list = json_decode((string) $item['lastvalue'], true);
+
+			if (!is_array($list)) {
+				continue;
+			}
+
+			foreach ($list as $entry) {
+				if (!is_array($entry) || count($entry) < 3) {
+					continue;
+				}
+
+				$network = self::ipNetwork((string) $entry[0], (int) $entry[1]);
+
+				if ($network !== null && trim((string) $entry[2]) !== '') {
+					$subnets[$network][] = [
+						'hostid' => (string) $item['hostid'],
+						'port' => (string) $entry[2],
+						'ip' => (string) $entry[0]
+					];
+				}
+			}
+		}
+
+		$linked = [];
+
+		if ($skip_neighbors) {
+			foreach ($this->edges as $edge) {
+				if ($edge['target_hostid'] !== null && in_array($edge['origin'], self::NEIGHBOR_PROTOCOLS, true)) {
+					$linked[$edge['source_hostid'].':'.$edge['target_hostid']] = true;
+					$linked[$edge['target_hostid'].':'.$edge['source_hostid']] = true;
+				}
+			}
+		}
+
+		ksort($subnets);
+
+		foreach ($subnets as $ends) {
+			if (count($ends) != 2 || $ends[0]['hostid'] === $ends[1]['hostid'] || $ends[0]['ip'] === $ends[1]['ip']) {
+				continue;
+			}
+
+			// The source end is a host of the filter; the other one may be outside it (loaded later).
+			if (!array_key_exists($ends[0]['hostid'], $this->scope)) {
+				$ends = array_reverse($ends);
+			}
+
+			[$a, $b] = $ends;
+
+			if (!array_key_exists($a['hostid'], $this->scope) || array_key_exists($a['hostid'].':'.$b['hostid'], $linked)) {
+				continue;
+			}
+
+			$this->addEdge([
+				'origin' => 'ip',
+				'protocols' => ['ip'],
+				'source' => 'h'.$a['hostid'],
+				'target' => 'h'.$b['hostid'],
+				'source_hostid' => $a['hostid'],
+				'target_hostid' => $b['hostid'],
+				'source_port' => $a['port'],
+				'source_ifindex' => '',
+				'target_port' => $b['port'],
+				'target_ifindex' => '',
+				'lost' => false,
+				'ts_delete' => 0
+			]);
+		}
+	}
+
+	/**
+	 * "10.0.0.5", 30 -> "10.0.0.4/30"; null for an invalid address or a prefix outside 24..31.
+	 */
+	private static function ipNetwork(string $ip, int $prefix): ?string {
+		if ($prefix < 24 || $prefix > 31 || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+			return null;
+		}
+
+		$mask = (0xFFFFFFFF << (32 - $prefix)) & 0xFFFFFFFF;
+
+		return long2ip(ip2long($ip) & $mask).'/'.$prefix;
+	}
 
 	/**
 	 * Host tag "topology.link" = "NEIGHBOR | local port | remote port" (ports are optional).

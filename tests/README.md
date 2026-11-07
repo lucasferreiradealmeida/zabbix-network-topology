@@ -9,6 +9,8 @@
   (esperado: 3 circuitos `EVC_ID`, 1 `CID`, 3 enlaces `CORE` compartilhados, `{#BW_DESC}` em Mbps; o campo `CORE-1-POP_CORE-2-POP` não vira enlace).
   Descrições com chaves (`T:INF|O:SITE|B:1G|C:DES=...;EID=9001`): `node run_preproc.js ../templates/src/capacity_lld.js fixtures/capacity_kv.walk fixtures/capacity_kv_macros.json`
   (esperado: circuitos `9001`, `9002` (sem `PEER_IP`) e `9005`, banda em `{#BW_DESC}`, e os uplinks `E:CORE-1` compartilhados).
+  Papel automático e interfaces ponto a ponto: `capacity_ip_core.walk` (backbone: tronco `CORE`, a ponta do core `et-0/1/0.2900` e um peering como `p2p`), `capacity_ip_dist.walk` (distribuição) e `capacity_ip_cpe.walk` (CPE), sem arquivo de macros.
+  Endereços ponto a ponto: `node run_preproc.js ../templates/src/capacity_ip.js fixtures/capacity_ip_dist.walk` (esperado: só os /30 e /31, com a interface).
   Macro de host `{$CIRCUIT_ID}`: `node run_preproc.js ../templates/src/capacity_lld.js fixtures/capacity_dist.walk fixtures/capacity_cpe_macro.json`
   (a interface `XGigabitEthernet0/0/5`, sem CID na descrição, recebe `NET-TO-0042` com `{#CID_SOURCE}` = `macro`).
 - `fixtures/*.walk` — saídas de `walk[]` no formato do Zabbix (Huawei, Cisco, CDP), com casos difíceis

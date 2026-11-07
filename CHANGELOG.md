@@ -1,5 +1,27 @@
 # Mudanças
 
+## 1.6.0
+
+- **Sem configuração host a host.** Feito para redes grandes sem LLDP/CDP:
+  - **Papel automático:** o template base pode ser vinculado direto a todos os roteadores. Quem tem tronco com o
+    campo `CORE` é backbone, quem agrega 2 ou mais circuitos é distribuição, quem tem 1 é CPE
+    (`{$CAPACITY.ROLE.BACKBONE.FIELDS}`, `{$CAPACITY.ROLE.DIST.MIN}`). Os perfis viram opcionais: forçam o papel
+    nas exceções, assim como `{$CAPACITY.SEGMENT}` no host. O item "papel do equipamento" mostra "Automático".
+  - **Limites por papel** em macros com contexto (`{$CAPACITY.ROLE.WARN:"backbone"}`=60 etc.).
+    `{$CAPACITY.UTIL.WARN}`/`CRIT` passam a valer 0 (= o do papel) e continuam aceitando contexto por circuito.
+    Os nomes dos triggers falam em "limite de atenção" e "limite crítico".
+  - **Vizinhos pelos endereços IP:** o template lê a IP-MIB (item `capacity.ip.p2p`) e o módulo liga duas
+    interfaces de equipamentos diferentes que estão no mesmo /30 ou /31. Vale para o capacity planning e para o
+    mapa (nova fonte de links "Endereços IP (/30, /31)"). Substitui a tag `topology.link`.
+  - **Uplink medido na ponta do core:** nos backbones, as interfaces com IP /30 ou /31 são descobertas
+    (`link=p2p`, `{$CAPACITY.P2P.ROLES}`). Quando ligam a uma distribuição, medem o trecho de distribuição, sem
+    depender da velocidade da Vlanif da distribuição (que costuma ser falsa). Uma `p2p` que liga a outro core é
+    tronco; uma que não liga a nada (peering) fica de fora.
+  - Distribuição sem uplink marcado: os links do próprio equipamento (o IP da Vlanif) dizem qual core ela usa.
+- `{$CAPACITY.SHARED.EXCLUDE}`: palavras que tiram um enlace da conta (ex.: `TEMPORARIO,BACKUP`).
+- Textos "achado pelo LLDP/CDP" viram "achado pelos vizinhos" (vale para qualquer fonte de link).
+- Importe de novo `templates/capacity_planning.yaml` **e** atualize o módulo.
+
 ## 1.5.1
 
 - Descrições com chaves (`T:INF|O:SITE|B:1G|C:DES=...;EID=9001`): a banda aceita chave (`B:1G`, `BW=100M`) e o

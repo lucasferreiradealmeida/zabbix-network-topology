@@ -28,7 +28,7 @@ use Modules\NetTopo\Lib\CapacityBuilder,
 class TopologyView extends CController {
 
 	public const PROFILE = 'web.nettopo.filter';
-	public const DEFAULT_SOURCES = ['lldp', 'cdp', 'tags'];
+	public const DEFAULT_SOURCES = ['lldp', 'cdp', 'ip', 'tags'];
 
 	protected function init(): void {
 		$this->disableCsrfValidation();

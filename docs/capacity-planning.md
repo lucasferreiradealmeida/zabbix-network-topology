@@ -67,9 +67,11 @@ upgrade**.
 | `Template Capacity Planning - Distribuicao` | agregação, metro, distribuição regional | 70% | 85% |
 | `Template Capacity Planning - CPE` | CPE do cliente, última milha | 80% | 95% |
 
-Cada perfil já inclui o template base. **Vincule só o perfil** ao equipamento. Os limites são padrões
-razoáveis (o backbone precisa de folga para aguentar a queda de um tronco) e podem ser mudados no
-perfil, no host ou por circuito.
+Desde a versão 1.6 os perfis são **opcionais**: o template base descobre o papel sozinho (veja "Sem LLDP/CDP e
+sem configurar host a host") e aplica os limites do papel. O perfil serve para forçar o papel de um equipamento
+que a regra automática classifica errado. Os limites são padrões razoáveis (o backbone precisa de folga para
+aguentar a queda de um tronco) e podem ser mudados por papel (`{$CAPACITY.ROLE.WARN:"backbone"}`), no host ou
+por circuito (`{$CAPACITY.UTIL.CRIT:"NET-TO-0001"}`).
 
 ### Camada 3 — correlação por circuito
 
@@ -432,49 +434,80 @@ precisa ser Super admin; as macros de host pedem permissão de escrita nos hosts
 - **Criar / atualizar dashboard**: cria o dashboard "Capacidade - NET-TO-0001" (público), ou atualiza se
   já existir. Se outra pessoa criou e você não pode editar, ele só é aberto.
 
-## Sem LLDP/CDP
+## Sem LLDP/CDP e sem configurar host a host
 
-Alguns ambientes não podem ligar LLDP/CDP (política de segurança). O capacity planning funciona assim mesmo,
-porque o circuito vem do **ID escrito em cada interface**, não do protocolo de vizinhança.
+Alguns ambientes não podem ligar LLDP/CDP (política de segurança) e têm centenas de roteadores. A partir da versão
+1.6 o capacity planning funciona nesse caso **sem macro nem tag por equipamento**: tudo vem dos dados que cada
+roteador já informa por SNMP.
 
-Como montar o mínimo, sem LLDP, CDP nem NetBox:
+Pense em uma cidade sem placas: dá para saber quem é vizinho de quem porque as casas de uma mesma rua têm números
+seguidos, e dá para saber a função de cada prédio pelo que acontece nele.
 
-1. Vincule só os perfis de capacity (`Template Capacity Planning - Backbone`, `- Distribuicao`, `- CPE`),
-   mais o template de interface que você já usa. **Não** vincule `Network Topology LLDP/CDP by SNMP`.
-2. Escreva o ID do circuito nas interfaces: na descrição (padrão `CID:...`, ou o padrão que a rede já usa, veja
-   acima) ou, para o CPE, nas macros `{$CIRCUIT_ID}` e `{$CIRCUIT_ID.IF}` do host. O script
-   `tools/capacity_enrich.py` preenche essas macros a partir de uma planilha.
-3. Marque os enlaces compartilhados (uplink do POP e troncos do core) com as palavras
-   `UPLINK`/`TRONCO`/`TRUNK` ou com o campo `CORE`.
-4. Banda: na descrição (`|100M|`, `B:1G`) ou em `{$CAPACITY.BW.MBPS:"<circuito>"}`.
-5. Ligue o uplink da distribuição ao core com **uma tag de host por uplink** (não por circuito):
-   `topology.link` = `NOME-DO-CORE | porta do uplink na distribuição | porta no core`. Com ela o módulo
-   sabe que aquele uplink sobe para o core e inclui os troncos do core no circuito.
-
-O que muda sem os vizinhos:
-
-| Função | Sem LLDP/CDP |
+| O que antes era manual | Como fica automático |
 |---|---|
-| Gargalo pelos 4 critérios, visão por trecho, previsão, capacidade recomendada, simulação, visão geral | Funcionam, com os trechos formados pelas interfaces que têm o ID e pelos enlaces compartilhados. |
-| Uplink da distribuição e troncos do core | Sem saber quem liga em quem, o módulo considera **todos** os enlaces compartilhados dos equipamentos que têm uma interface com o ID do circuito (o core entra pela tag `topology.link` do passo 5). O gargalo mostra o mais carregado deles. |
-| Equipamento sem o ID | Sem vizinhos, um equipamento só entra no caminho se tiver uma interface com o ID (ou a macro `{$CIRCUIT_ID}`). Se o ID não está na distribuição, o trecho de distribuição do circuito não aparece. |
-| Sugestões "o ID está faltando na outra ponta" | Não aparecem (dependem do vizinho). Use a linha **CIRCUIT_ID nos 3 papéis**. |
-| Mapa de topologia | Os links vêm de tags de host `topology.link`, de mapas nativos do Zabbix ou de dependências de trigger. |
+| Vincular o perfil certo (Backbone, Distribuição, CPE) em cada host | Vincule **só o template base** em todos os roteadores (de uma vez: dentro de um template que todos já usam, ou por atualização em massa). O papel é descoberto pelos dados: tem tronco com o campo `CORE` na descrição → **backbone**; agrega 2 ou mais circuitos → **distribuição**; tem 1 circuito → **CPE**. |
+| Marcar o uplink da distribuição (`{$CAPACITY.SHARED.FIELDS}` no host) | Desnecessário: o enlace distribuição ↔ core é achado pelo IP e medido **na ponta do core** (veja abaixo). |
+| Informar a banda de uma VLAN (`{$CAPACITY.BW.MBPS:"Vlanif..."}`) | Desnecessário: a ponta do core diz a banda na descrição (`|100G|`) ou na velocidade da porta. |
+| Tag `topology.link` em cada distribuição | Desnecessária: os vizinhos vêm dos **endereços ponto a ponto**. |
 
-Quanto mais interfaces tiverem o ID, melhor o resultado; dá para começar com poucos circuitos e crescer.
+### Vizinhos pelos endereços IP (/30 e /31)
+
+O template lê a tabela de IPs de cada equipamento (IP-MIB) e guarda no item `capacity.ip.p2p` os endereços
+/30 e /31 e a interface de cada um. O módulo junta duas interfaces de equipamentos diferentes que estão na
+**mesma sub-rede /30 ou /31**: são as duas pontas de um enlace. Exemplo: `Vlanif2900` da distribuição com
+`10.1.1.21/31` e `et-0/1/0.2900` do core com `10.1.1.20/31` → as duas estão ligadas.
+
+- Funciona em qualquer fabricante que responda a IP-MIB (Huawei, Juniper, Cisco, MikroTik).
+- Uma sub-rede que aparece em mais de dois lugares (a mesma faixa privada usada em dois POPs) é ignorada.
+- No mapa de topologia é a fonte de links **Endereços IP (/30, /31)**.
+
+### Onde o uplink é medido
+
+A interface da distribuição que fala com o core costuma ser uma interface de VLAN (`Vlanif2900`), e a
+velocidade que ela informa não é a do enlace (uma Vlanif de um enlace de 100G pode informar 1G). Por isso o
+enlace é medido **na ponta do core**: nos equipamentos com papel backbone, o template descobre também as
+interfaces com IP /30 ou /31 (tag `link=p2p`). Quando a distribuição tem um IP na mesma sub-rede, aquela
+interface do core vira a **interface LAN do core** do circuito e mede o trecho de distribuição.
+
+Uma interface `p2p` do core que não liga a nenhum equipamento do Zabbix (um peering BGP, por exemplo) não entra
+no caminho; uma que liga a outro core vira tronco.
+
+### Exceções e ajustes (uma vez, para a rede toda)
+
+| Macro | Para quê |
+|---|---|
+| `{$CAPACITY.SEGMENT}` no host (ou um perfil) | Corrigir o papel de um equipamento que a regra classifica errado (ex.: um CPE com 2 circuitos). |
+| `{$CAPACITY.ROLE.DIST.MIN}` | Quantos circuitos fazem de um equipamento uma distribuição (padrão 2). |
+| `{$CAPACITY.ROLE.BACKBONE.FIELDS}` | Campos da descrição que indicam tronco de backbone (padrão `CORE`). |
+| `{$CAPACITY.SHARED.EXCLUDE}` | Palavras que tiram um enlace da conta, como `TEMPORARIO,BACKUP`. |
+| `{$CAPACITY.P2P.ROLES}` | Papéis em que as interfaces /30 e /31 são descobertas (padrão `backbone`). |
+| `{$CAPACITY.ROLE.WARN:"<papel>"}`, `{$CAPACITY.ROLE.CRIT:"<papel>"}` | Limites de atenção e crítico de cada papel (backbone 60/80, distribuição 70/85, CPE 80/95). |
+
+Macros que valem para a rede toda podem ser criadas como **macros globais** (*Administração → Macros*), exceto
+as que o template já define (o valor do template vence o global): essas se mudam no próprio template.
+
+### O que continua igual sem LLDP/CDP
+
+| Função | Comportamento |
+|---|---|
+| Gargalo pelos 4 critérios, visão por trecho, previsão, capacidade recomendada, simulação, visão geral | Funcionam. |
+| Troncos do core | Sem saber por qual tronco cada circuito sai, o módulo considera **todos** os troncos do core do circuito e destaca o mais carregado. Use `{$CAPACITY.SHARED.EXCLUDE}` para tirar enlaces temporários. |
+| Equipamento sem o ID | Um equipamento só entra no caminho se tiver uma interface com o ID ou um IP ponto a ponto ligado ao caminho. |
+| CIRCUIT_ID nos 3 papéis | O core costuma não ter o ID dos circuitos que chegam pela distribuição: a linha mostra ✗ Backbone, e isso é esperado. |
 
 ## Implantar na rede de verdade
 
 1. Importe `templates/capacity_planning.yaml` e atualize o módulo (versão 1.3.0 ou mais nova). Os itens
    novos (média de 30 dias, crescimento) e o link dos problemas chegam às interfaces já descobertas em até
    1 hora.
-2. Vincule os perfis por papel: um grupo de hosts por papel facilita (ex.: "Regional Norte/Core").
+2. Vincule o template base `Template Capacity Planning` a todos os roteadores (o papel é automático) ou os
+   perfis por papel, quando quiser forçar o papel.
 3. Combine o padrão de nomes com a equipe de rede e comece por um piloto pequeno (alguns circuitos de uma
    região). Em até 1 hora (`{$CAPACITY.LLD.INTERVAL}`) as interfaces aparecem.
 4. Banda contratada: macros globais `{$CAPACITY.BW.MBPS:"NET-TO-0001"}` = `300` (Mbps) — à mão ou pelo
    script com a coluna `contracted_mbps`.
 5. CPEs sem CID na descrição: `{$CIRCUIT_ID}` e `{$CIRCUIT_ID.IF}` no host (ou o script).
-6. Ajuste os limites dos perfis se precisar.
+6. Ajuste os limites por papel (`{$CAPACITY.ROLE.WARN:"backbone"}` etc.) se precisar.
 7. NetBox (opcional): preencha `{$CAPACITY.NETBOX.URL}` e `{$CAPACITY.NETBOX.TOKEN}` (macro secreta).
    Interfaces sem CID na descrição passam a buscar o CID no campo personalizado
    `{$CAPACITY.NETBOX.FIELD}` (padrão `circuit_id`) da interface no NetBox, ou na descrição dela lá.

@@ -96,7 +96,7 @@ Aparecem **Monitoramento → Topologia de rede** (logo abaixo de Mapas) e **Moni
 2. Vincule **Network Topology LLDP by SNMP** aos roteadores/switches (eles precisam de interface SNMP no Zabbix). Nos Cisco vincule também o de CDP.
 3. Mantenha os templates de interface que você já usa (Huawei VRP, Cisco IOS, Mikrotik, Network Generic...): é deles que o módulo lê status e tráfego das portas.
 4. Para o capacity planning, importe também `templates/capacity_planning.yaml` e vincule os perfis (veja **Planejamento de capacidade** abaixo).
-   O capacity planning **não precisa de LLDP/CDP**: se a sua rede não pode usá-los, vincule só os perfis de capacity. O circuito e a banda podem vir das descrições que a rede já tem (ex.: `Cliente|BORDER|100M|EVC_ID#1001`) ou de macros de host.
+   O capacity planning **não precisa de LLDP/CDP nem de configuração host a host**: vincule o template base `Template Capacity Planning` a todos os roteadores. O circuito e a banda vêm das descrições que a rede já tem (ex.: `Cliente|BORDER|100M|EVC_ID#1001`), o papel de cada equipamento é descoberto pelos dados e os vizinhos pelos endereços ponto a ponto (/30, /31). Os perfis (`- Backbone`, `- Distribuicao`, `- CPE`) só forçam o papel nas exceções.
 
 O equipamento precisa ter LLDP ligado e expor a LLDP-MIB via SNMP. Para conferir, liste os vizinhos:
 

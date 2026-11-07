@@ -26,7 +26,8 @@ the official Huawei VRP, Cisco IOS and MikroTik templates.
 - **Links** show the port name on each end, shortened like on the device (`XGE0/0/1`, `Gi0/1`, `Te1/1/1`):
   green = up, thick red = down, dotted red = **lost neighbor** (gone from LLDP), orange/yellow = a problem
   on the port. Traffic and utilization appear on the link; the width follows the link speed.
-- **Link sources**: LLDP, CDP, host tags, links of existing Zabbix maps and trigger dependencies.
+- **Link sources**: LLDP, CDP, point-to-point IP addresses (/30, /31), host tags, links of existing Zabbix maps
+  and trigger dependencies.
 - **Saved maps**: public (the team's standard) or personal, opened locked; an edit mode to move hosts,
   bend links and draw zones, texts and arrows; publish as a native Zabbix map.
 - **Navigation**: mouse wheel zooms around the cursor, click a host for the native Zabbix menu,
@@ -94,13 +95,16 @@ docker compose restart snmpsim
 3. Import `templates/nettopo_lldp_snmp.yaml` (and `nettopo_cdp_snmp.yaml` for Cisco) and link
    **Network Topology LLDP by SNMP** to your routers and switches. Keep the interface templates you already
    use: port status and traffic come from them.
-4. For capacity planning, import `templates/capacity_planning.yaml` and link the role profiles
-   (`Template Capacity Planning - Backbone`, `- Distribuicao`, `- CPE`).
+4. For capacity planning, import `templates/capacity_planning.yaml` and link `Template Capacity Planning` to your
+   routers (the role is found automatically), or a role profile (`- Backbone`, `- Distribuicao`, `- CPE`) to force
+   it.
 
 The topology map needs LLDP/CDP (or host tags, links of existing Zabbix maps, trigger dependencies).
-**Capacity planning does not need LLDP/CDP**: link only the capacity templates, and it reads the circuit ID and the
-bandwidth from the interface descriptions you already have (for example `Customer|BORDER|100M|EVC_ID#1001`) or
-from host macros. See "Sem LLDP/CDP" in [docs/capacity-planning.md](docs/capacity-planning.md).
+**Capacity planning needs neither LLDP/CDP nor per-host settings**: link the base template to all your routers.
+It reads the circuit ID and the bandwidth from the interface descriptions you already have (for example
+`Customer|BORDER|100M|EVC_ID#1001`), finds the role of each device from its data (core trunks, number of
+circuits) and finds the neighbors from the point-to-point addresses (/30, /31). See "Sem LLDP/CDP" in
+[docs/capacity-planning.md](docs/capacity-planning.md).
 
 For the map, devices need LLDP enabled and the LLDP-MIB exposed over SNMP. Full details, macros and troubleshooting
 are in [README.pt-BR.md](README.pt-BR.md).

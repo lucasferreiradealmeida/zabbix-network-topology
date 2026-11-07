@@ -8,6 +8,13 @@
 //     ({$CAPACITY.SHARED.FIELDS}=CORE matches "name|CORE|100G|...").
 // The capacity written in a "|"-separated description ("name|BORDER|200M|EVC_ID#1") is returned in {#BW_DESC}
 // (Mbps, 0 = none) and used as the capacity of the interface unless a {$CAPACITY.BW.MBPS} contract exists.
+// Role of the device ({#SEGMENT}): {$CAPACITY.SEGMENT} when a profile template or the host sets it; otherwise it is
+// found from the data: an interface with a whole field of {$CAPACITY.ROLE.BACKBONE.FIELDS} ("|CORE|") = backbone,
+// {$CAPACITY.ROLE.DIST.MIN} or more circuits = distribution, fewer = CPE. {#UTIL_WARN}/{#UTIL_CRIT} are the limits
+// of that role ({$CAPACITY.ROLE.WARN:"<role>"}, {$CAPACITY.ROLE.CRIT:"<role>"}).
+// Point-to-point interfaces: on the roles in {$CAPACITY.P2P.ROLES} (default backbone), interfaces with a /30 or /31
+// IPv4 address and no circuit are discovered too ({#LINK} = p2p): they are the core end of the links to the
+// distribution devices, found by the module through the addresses (no LLDP/CDP needed).
 // Optional: when {$CAPACITY.NETBOX.URL} is set, interfaces without a CID in the description take it
 // from NetBox (custom field {$CAPACITY.NETBOX.FIELD} of the interface, or its description).
 // Optional: the host macro {$CIRCUIT_ID} gives the circuit of the whole device (usually a CPE); it goes to
@@ -16,9 +23,10 @@
 //
 // Zabbix replaces the user macros below before running the script.
 var SEGMENT = cfg('{$CAPACITY.SEGMENT}', '');
-var CID_PREFIX = cfg('{$CAPACITY.CID.PREFIX}', 'CID');
+var CID_PREFIX = cfg('{$CAPACITY.CID.PREFIX}', 'CID,EVC_ID,EID');
 var SHARED_WORDS = cfg('{$CAPACITY.SHARED.WORDS}', 'UPLINK,TRONCO,TRUNK');
-var SHARED_FIELDS = cfg('{$CAPACITY.SHARED.FIELDS}', '');
+var SHARED_FIELDS = cfg('{$CAPACITY.SHARED.FIELDS}', 'CORE');
+var SHARED_EXCLUDE = cfg('{$CAPACITY.SHARED.EXCLUDE}', '');
 var BW_FROM_DESC = cfg('{$CAPACITY.BW.FROM.DESC}', '1') !== '0';
 var NETBOX_URL = cfg('{$CAPACITY.NETBOX.URL}', '');
 var NETBOX_TOKEN = cfg('{$CAPACITY.NETBOX.TOKEN}', '');
@@ -26,12 +34,25 @@ var NETBOX_FIELD = cfg('{$CAPACITY.NETBOX.FIELD}', 'circuit_id');
 var NETBOX_DEVICE = cfg('{$CAPACITY.NETBOX.DEVICE}', '');
 var HOST_CID = cfg('{$CIRCUIT_ID}', '');
 var HOST_CID_IF = cfg('{$CIRCUIT_ID.IF}', '');
+var ROLE_BACKBONE_FIELDS = cfg('{$CAPACITY.ROLE.BACKBONE.FIELDS}', 'CORE');
+var ROLE_DIST_MIN = parseInt(cfg('{$CAPACITY.ROLE.DIST.MIN}', '2'), 10);
+var P2P_ROLES = cfg('{$CAPACITY.P2P.ROLES}', 'backbone');
+var P2P_PREFIX = parseInt(cfg('{$CAPACITY.P2P.PREFIX}', '30'), 10);
+// Utilization limits by role (%): attention and critical.
+var ROLE_LIMITS = {
+	backbone: [cfg('{$CAPACITY.ROLE.WARN:"backbone"}', '60'), cfg('{$CAPACITY.ROLE.CRIT:"backbone"}', '80')],
+	distribuicao: [cfg('{$CAPACITY.ROLE.WARN:"distribuicao"}', '70'), cfg('{$CAPACITY.ROLE.CRIT:"distribuicao"}', '85')],
+	cpe: [cfg('{$CAPACITY.ROLE.WARN:"cpe"}', '80'), cfg('{$CAPACITY.ROLE.CRIT:"cpe"}', '95')],
+	indefinido: [cfg('{$CAPACITY.ROLE.WARN}', '70'), cfg('{$CAPACITY.ROLE.CRIT}', '90')]
+};
 
 var OID_IFNAME = '1.3.6.1.2.1.31.1.1.1.1.';
 var OID_IFALIAS = '1.3.6.1.2.1.31.1.1.1.18.';
 var OID_IFHIGHSPEED = '1.3.6.1.2.1.31.1.1.1.15.';
 var OID_IFDESCR = '1.3.6.1.2.1.2.2.1.2.';
 var OID_SYSNAME = '1.3.6.1.2.1.1.5.0';
+var OID_IPIFINDEX = '1.3.6.1.2.1.4.20.1.2.';
+var OID_IPMASK = '1.3.6.1.2.1.4.20.1.3.';
 
 var SEGMENT_LABELS = {backbone: 'Backbone', distribuicao: 'Distribuição', cpe: 'CPE', indefinido: 'Indefinido'};
 
@@ -42,8 +63,18 @@ var CID_RE = new RegExp('(?:^|[^A-Za-z0-9])(?:' + prefixAlternatives(CID_PREFIX)
 	'(?:\\s*[,;]\\s*(?![A-Za-z0-9._/-]+\\s*[:=#])' + ID + ')*)', 'i');
 var SHARED_RE = wordsRe(SHARED_WORDS);
 var SHARED_FIELD_LIST = fieldList(SHARED_FIELDS);
+// Links left out of capacity planning (temporary, backup...): words or "|" fields of the description.
+var SHARED_EXCLUDE_RE = wordsRe(SHARED_EXCLUDE);
 var HOST_CIDS = splitIds(HOST_CID);
 var HOST_CID_RE = HOST_CIDS.length ? namesRe(HOST_CID_IF) : null;
+var ROLE_BACKBONE_LIST = fieldList(ROLE_BACKBONE_FIELDS);
+
+if (isNaN(ROLE_DIST_MIN) || ROLE_DIST_MIN < 1) {
+	ROLE_DIST_MIN = 2;
+}
+if (isNaN(P2P_PREFIX) || P2P_PREFIX < 24 || P2P_PREFIX > 31) {
+	P2P_PREFIX = 30;
+}
 
 function cfg(value, fallback) {
 	var v = String(value).replace(/^\s+|\s+$/g, '');
@@ -132,26 +163,90 @@ function cidsFrom(description) {
 }
 
 function isShared(description) {
-	var fields, k, f, w;
+	if (isExcluded(description)) {
+		return false;
+	}
 
 	if (SHARED_RE !== null && SHARED_RE.test(description || '')) {
 		return true;
 	}
 
-	if (SHARED_FIELD_LIST.length) {
-		// Whole "|"-separated fields only: "name|CORE|100G" yes, "CORE-RJ-01_CORE-SP-01" no.
-		fields = String(description || '').split('|');
-		for (k = 0; k < fields.length; k++) {
-			f = fields[k].replace(/^\s+|\s+$/g, '').toUpperCase();
-			for (w = 0; w < SHARED_FIELD_LIST.length; w++) {
-				if (f === SHARED_FIELD_LIST[w]) {
-					return true;
-				}
+	return hasField(description, SHARED_FIELD_LIST);
+}
+
+function isExcluded(description) {
+	return SHARED_EXCLUDE_RE !== null && SHARED_EXCLUDE_RE.test(description || '');
+}
+
+// Whole "|"-separated fields only: "name|CORE|100G" has CORE, "CORE-RJ-01_CORE-SP-01" has not.
+function hasField(description, list) {
+	var fields, k, f, w;
+
+	if (!list.length) {
+		return false;
+	}
+
+	fields = String(description || '').split('|');
+
+	for (k = 0; k < fields.length; k++) {
+		f = fields[k].replace(/^\s+|\s+$/g, '').toUpperCase();
+		for (w = 0; w < list.length; w++) {
+			if (f === list[w]) {
+				return true;
 			}
 		}
 	}
 
 	return false;
+}
+
+// "255.255.255.254" -> 31; -1 when not a contiguous mask.
+function prefixLength(mask) {
+	var parts = String(mask).split('.'), bits = '', k, b;
+
+	if (parts.length !== 4) {
+		return -1;
+	}
+
+	for (k = 0; k < 4; k++) {
+		b = parseInt(parts[k], 10);
+		if (isNaN(b) || b < 0 || b > 255) {
+			return -1;
+		}
+		bits += ('00000000' + b.toString(2)).slice(-8);
+	}
+
+	if (!/^1*0*$/.test(bits)) {
+		return -1;
+	}
+
+	return bits.indexOf('0') < 0 ? 32 : bits.indexOf('0');
+}
+
+// ifIndex => true for the interfaces with a point-to-point IPv4 address (/P2P_PREFIX to /31).
+function pointToPoint(walk) {
+	var out = {}, oid, ip, prefix, first;
+
+	for (oid in walk) {
+		if (!walk.hasOwnProperty(oid) || oid.indexOf(OID_IPIFINDEX) !== 0) {
+			continue;
+		}
+
+		ip = oid.substring(OID_IPIFINDEX.length);
+		first = parseInt(ip.split('.')[0], 10);
+
+		if (first === 127 || first === 0) {
+			continue;
+		}
+
+		prefix = prefixLength(walk[OID_IPMASK + ip] || '');
+
+		if (prefix >= P2P_PREFIX && prefix <= 31) {
+			out[String(walk[oid]).replace(/[^0-9]/g, '')] = true;
+		}
+	}
+
+	return out;
 }
 
 // Capacity written as a whole "|"-separated field ("100M", "1G", "10 Gbps", "2,5G", or with a key: "B:1G",
@@ -394,7 +489,9 @@ function netboxInterfaces(device) {
 }
 
 var walk = parseWalk(value);
+// Role set by a profile template or by the host; 'indefinido' = find it from the data (below).
 var segment = normalizeSegment(SEGMENT);
+var p2p = pointToPoint(walk);
 var indexes = [], seen = {}, oid, idx, k;
 
 for (oid in walk) {
@@ -426,7 +523,27 @@ if (NETBOX_URL !== '') {
 	netbox = netboxInterfaces(NETBOX_DEVICE !== '' ? NETBOX_DEVICE : (walk[OID_SYSNAME] || ''));
 }
 
-var rows = [];
+var rows = [], candidates = [], circuits = {}, backbone_field = false, c;
+
+function makeRow(idx, name, alias, cids, link, source) {
+	var speed = parseInt(walk[OID_IFHIGHSPEED + idx] || '0', 10);
+
+	return {
+		'{#SNMPINDEX}': idx,
+		'{#IFNAME}': name,
+		'{#IFALIAS}': alias,
+		'{#IFSPEED}': String(isNaN(speed) ? 0 : speed),
+		// Capacity written in the description (Mbps, 0 = none): see bandwidthFrom().
+		'{#BW_DESC}': String(bandwidthFrom(alias)),
+		'{#CIRCUIT_ID}': cids.length ? cids[0] : '',
+		// Context of {$CAPACITY.BW.MBPS}: the (first) circuit ID, or the interface name for links.
+		'{#BW_KEY}': cids.length ? cids[0] : name,
+		'{#CIRCUITS}': cids.join(','),
+		'{#CIRCUIT_LABEL}': cids.length ? cids.join(',') : (link === 'p2p' ? 'ponto a ponto' : 'compartilhado'),
+		'{#LINK}': link,
+		'{#CID_SOURCE}': source
+	};
+}
 
 for (k = 0; k < indexes.length; k++) {
 	idx = indexes[k];
@@ -454,29 +571,52 @@ for (k = 0; k < indexes.length; k++) {
 		source = 'macro';
 	}
 
+	if (hasField(alias, ROLE_BACKBONE_LIST)) {
+		backbone_field = true;
+	}
+
 	if (!cids.length && !shared) {
+		// Not a circuit: kept aside in case the device turns out to be a role with point-to-point discovery.
+		if (p2p[idx] && !isExcluded(alias)) {
+			candidates.push(makeRow(idx, name, alias, [], 'p2p', ''));
+		}
 		continue;
 	}
 
-	var speed = parseInt(walk[OID_IFHIGHSPEED + idx] || '0', 10);
+	for (c = 0; c < cids.length; c++) {
+		circuits[cids[c]] = true;
+	}
 
-	rows.push({
-		'{#SNMPINDEX}': idx,
-		'{#IFNAME}': name,
-		'{#IFALIAS}': alias,
-		'{#IFSPEED}': String(isNaN(speed) ? 0 : speed),
-		// Capacity written in the description (Mbps, 0 = none): see bandwidthFrom().
-		'{#BW_DESC}': String(bandwidthFrom(alias)),
-		'{#CIRCUIT_ID}': cids.length ? cids[0] : '',
-		// Context of {$CAPACITY.BW.MBPS}: the (first) circuit ID, or the interface name for shared links.
-		'{#BW_KEY}': cids.length ? cids[0] : name,
-		'{#CIRCUITS}': cids.join(','),
-		'{#CIRCUIT_LABEL}': cids.length ? cids.join(',') : 'compartilhado',
-		'{#LINK}': shared ? 'compartilhado' : 'dedicado',
-		'{#SEGMENT}': segment,
-		'{#SEGMENT_LABEL}': SEGMENT_LABELS[segment],
-		'{#CID_SOURCE}': source
-	});
+	rows.push(makeRow(idx, name, alias, cids, shared ? 'compartilhado' : 'dedicado', source));
 }
+
+// Role from the data when no profile template or host macro sets it: the device that has core trunks is
+// backbone; the one that gathers several circuits is distribution; the one with fewer is the CPE.
+if (segment === 'indefinido') {
+	var count = 0;
+
+	for (c in circuits) {
+		if (circuits.hasOwnProperty(c)) {
+			count++;
+		}
+	}
+
+	segment = backbone_field ? 'backbone' : (count >= ROLE_DIST_MIN ? 'distribuicao' : (count > 0 ? 'cpe' : 'indefinido'));
+}
+
+if (candidates.length && hasField(segment, fieldList(P2P_ROLES))) {
+	rows = rows.concat(candidates);
+}
+
+for (k = 0; k < rows.length; k++) {
+	rows[k]['{#SEGMENT}'] = segment;
+	rows[k]['{#SEGMENT_LABEL}'] = SEGMENT_LABELS[segment];
+	rows[k]['{#UTIL_WARN}'] = ROLE_LIMITS[segment][0];
+	rows[k]['{#UTIL_CRIT}'] = ROLE_LIMITS[segment][1];
+}
+
+rows.sort(function(a, b) {
+	return parseInt(a['{#SNMPINDEX}'], 10) - parseInt(b['{#SNMPINDEX}'], 10);
+});
 
 return JSON.stringify(rows);

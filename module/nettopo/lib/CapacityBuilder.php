@@ -395,7 +395,10 @@ class CapacityBuilder {
 				'cid_source' => $tags['cid_source'] ?? '',
 				// Description of the interface (templates 1.3 and newer): names the client/site.
 				'alias' => $tags['alias'] ?? '',
-				'shared' => ($tags['link'] ?? '') === 'compartilhado',
+				// Point-to-point interfaces (link=p2p, template 1.6) carry a whole device's traffic: shared, but they
+				// count only where a link (address, LLDP/CDP, tag) says what is at the other end.
+				'shared' => in_array($tags['link'] ?? '', ['compartilhado', 'p2p'], true),
+				'p2p' => ($tags['link'] ?? '') === 'p2p',
 				'items' => [],
 				'values' => [],
 				'errors' => [],
@@ -826,7 +829,7 @@ class CapacityBuilder {
 				$remote_tagged = $remote_id !== null && in_array($cid, $this->interfaces[$remote_id]['cids'], true);
 
 				if (!$remote_tagged) {
-					$circuit['suggestions'][] = I18n::t('%1$s %2$s is at the other end of %3$s %4$s (LLDP/CDP) and has no "CID:%5$s" in its description.',
+					$circuit['suggestions'][] = I18n::t('%1$s %2$s is at the other end of %3$s %4$s (neighbor link) and has not the circuit ID %5$s in its description.',
 						$this->hosts[$remote]['name'], $link['remote_port'], $this->hosts[$interface['hostid']]['name'],
 						$interface['name'], $cid
 					);
@@ -868,11 +871,13 @@ class CapacityBuilder {
 	}
 
 	/**
-	 * Distribution devices: shared interfaces towards the core (by LLDP/CDP). When a device has no link to the
-	 * core, its links to other distribution devices are followed (metro chains and rings), and when the
-	 * direction is unknown all its shared interfaces count. The first devices are the POPs of the circuit; the
-	 * ones reached through them are the regional aggregation. The core interface at the other end of an uplink
-	 * (core LAN) belongs to the same link.
+	 * Distribution devices: shared interfaces towards the core (by LLDP/CDP, point-to-point addresses or tags).
+	 * When a device has no link to the core, its links to other distribution devices are followed (metro chains
+	 * and rings), and when the direction is unknown all its shared interfaces count. When no shared interface
+	 * has a link, any link of the device to the core (for example the address of a VLAN interface) still says
+	 * which core it uses. The first devices are the POPs of the circuit; the ones reached through them are the
+	 * regional aggregation. The core interface at the other end of an uplink (core LAN) belongs to the same link
+	 * and measures it when the device's own end is not measured.
 	 */
 	private function addUplinks(array &$circuit): void {
 		$queue = [];
@@ -919,57 +924,61 @@ class CapacityBuilder {
 					}
 				}
 
-				if (!$known) {
+				// A point-to-point interface without a link may face anything: it is not an uplink by itself.
+				if (!$known && !$this->interfaces[$id]['p2p']) {
 					$unknown[$id] = [];
 				}
 			}
 
 			$chosen = $up ?: ($side ?: $unknown);
 
-			foreach ($chosen as $id => $next_links) {
-				$circuit['interfaces'][$id] = 'distribuicao';
-				$circuit['hops'][$id] = array_key_exists($hostid, $pops) ? 'pop_uplink' : 'agg_uplink';
+			// No measured uplink is linked: the links of the device itself (not discovered as capacity
+			// interfaces, like the VLAN interface towards the core) still say where it goes.
+			$device_links = [];
 
-				foreach ($next_links as $link) {
-					$next = $link['remote_hostid'];
+			if (!$up && !$side) {
+				foreach ($this->links[$hostid] ?? [] as $link) {
+					$level = $this->level($link['remote_hostid']);
 
-					if (!array_key_exists($next, $circuit['hostids'])) {
-						$circuit['hostids'][$next] = ['inferred' => true];
+					if ($level === self::ROLE_LEVEL['backbone']) {
+						$device_links[] = $link;
 					}
+				}
 
-					if ($this->role($next) === 'distribuicao') {
-						$queue[] = $next;
-
-						continue;
-					}
-
-					// Core LAN: the core end of this uplink.
-					$peer = $this->by_port[$next][PortName::normalize($link['remote_port'])] ?? null;
-
-					if ($peer !== null) {
-						if (!array_key_exists($peer, $circuit['interfaces'])) {
-							$circuit['interfaces'][$peer] = 'distribuicao';
-							$circuit['hops'][$peer] = 'core_lan';
+				if (!$device_links) {
+					foreach ($this->links[$hostid] ?? [] as $link) {
+						if ($this->level($link['remote_hostid']) === self::ROLE_LEVEL['distribuicao']
+								&& !array_key_exists($link['remote_hostid'], $visited)) {
+							$device_links[] = $link;
 						}
-					}
-					else {
-						$circuit['peers'][] = [
-							'hop' => 'core_lan',
-							'host' => $this->hosts[$next]['name'] ?? $link['remote_name'],
-							'port' => $link['remote_port'],
-							'via' => $id
-						];
 					}
 				}
 			}
 
-			if (!$chosen) {
+			$hop = array_key_exists($hostid, $pops) ? 'pop_uplink' : 'agg_uplink';
+			$measured = (bool) $chosen;
+
+			foreach ($chosen as $id => $next_links) {
+				$circuit['interfaces'][$id] = 'distribuicao';
+				$circuit['hops'][$id] = $hop;
+
+				foreach ($next_links as $link) {
+					$measured = $this->followUplink($circuit, $queue, $link, $id) || $measured;
+				}
+			}
+
+			foreach ($device_links as $link) {
+				$via = $this->hosts[$hostid]['name'].' '.$link['port'];
+				$measured = $this->followUplink($circuit, $queue, $link, $via) || $measured;
+			}
+
+			if (!$measured) {
 				$hint = '';
 
 				foreach ($this->links[$hostid] ?? [] as $link) {
 					if (in_array($this->level($link['remote_hostid']),
 							[self::ROLE_LEVEL['backbone'], self::ROLE_LEVEL['distribuicao']], true)) {
-						$hint = ' '.I18n::t('By LLDP/CDP the uplink is %1$s (to %2$s %3$s).', $link['port'],
+						$hint = ' '.I18n::t('By the neighbor links the uplink is %1$s (to %2$s %3$s).', $link['port'],
 							$link['remote_name'], $link['remote_port']
 						);
 						break;
@@ -984,7 +993,49 @@ class CapacityBuilder {
 	}
 
 	/**
-	 * Core devices: shared interfaces, except the ones facing distribution/CPE devices (those are core LAN).
+	 * Follows one uplink link to the next device: another distribution device goes to the queue; a core gets
+	 * into the circuit and its end of the link (core LAN) is measured when the core discovered that interface.
+	 *
+	 * @return bool  true when the core end of the link is measured
+	 */
+	private function followUplink(array &$circuit, array &$queue, array $link, string $via): bool {
+		$next = $link['remote_hostid'];
+
+		if (!array_key_exists($next, $circuit['hostids'])) {
+			$circuit['hostids'][$next] = ['inferred' => true];
+		}
+
+		if ($this->role($next) === 'distribuicao') {
+			$queue[] = $next;
+
+			return false;
+		}
+
+		// Core LAN: the core end of this uplink.
+		$peer = $this->by_port[$next][PortName::normalize($link['remote_port'])] ?? null;
+
+		if ($peer !== null) {
+			if (!array_key_exists($peer, $circuit['interfaces'])) {
+				$circuit['interfaces'][$peer] = 'distribuicao';
+				$circuit['hops'][$peer] = 'core_lan';
+			}
+
+			return true;
+		}
+
+		$circuit['peers'][] = [
+			'hop' => 'core_lan',
+			'host' => $this->hosts[$next]['name'] ?? $link['remote_name'],
+			'port' => $link['remote_port'],
+			'via' => $via
+		];
+
+		return false;
+	}
+
+	/**
+	 * Core devices: shared interfaces, except the ones facing distribution/CPE devices (those are core LAN), and
+	 * point-to-point interfaces linked to another core.
 	 */
 	private function addTrunks(array &$circuit): void {
 		foreach (array_keys($circuit['hostids']) as $hostid) {
@@ -996,6 +1047,7 @@ class CapacityBuilder {
 
 			foreach ($this->sharedInterfaces($hostid) as $id) {
 				$faces_down = false;
+				$faces_core = false;
 
 				foreach ($this->linksOf($hostid, $this->interfaces[$id]['name']) as $link) {
 					$level = $this->level($link['remote_hostid']);
@@ -1003,9 +1055,13 @@ class CapacityBuilder {
 					if ($level !== null && $level < self::ROLE_LEVEL['backbone']) {
 						$faces_down = true;
 					}
+					elseif ($level === self::ROLE_LEVEL['backbone']) {
+						$faces_core = true;
+					}
 				}
 
-				if (!$faces_down) {
+				// A point-to-point interface is a trunk only when it links to another core (not a BGP peer).
+				if (!$faces_down && (!$this->interfaces[$id]['p2p'] || $faces_core)) {
 					$circuit['interfaces'][$id] = 'backbone';
 					$circuit['hops'][$id] = 'core_trunk';
 				}

@@ -8,8 +8,11 @@ zabbix_export:
     template: Template Capacity Planning
     name: Template Capacity Planning
     description: |
-      Capacity planning - camada 1 (template base). Não vincule este template direto: use um dos perfis
-      "Template Capacity Planning - Backbone", "- Distribuicao" ou "- CPE", que o incluem.
+      Capacity planning - camada 1 (template base). Pode ser vinculado direto a todos os roteadores (por exemplo
+      dentro de um template que todos já usam): o papel de cada um é descoberto pelos dados. Quem tem tronco
+      com o campo CORE na descrição é backbone; quem agrega {$CAPACITY.ROLE.DIST.MIN} ou mais circuitos é
+      distribuição; quem tem menos é CPE. Os perfis "Template Capacity Planning - Backbone", "- Distribuicao" e "- CPE" (ou a macro
+      {$CAPACITY.SEGMENT} no host) forçam um papel nas exceções.
 
       Descobre as interfaces cuja descrição (ifAlias) tem o identificador do circuito, por exemplo
       "CID:NET-TO-0001" (vários circuitos: "CID:NET-TO-0001,NET-TO-0002"; a palavra antes do separador é
@@ -19,6 +22,8 @@ zabbix_export:
       capacidade da interface (também com chave: "B:1G"). Para cada uma coleta tráfego, capacidade, utilização, p95,
       pico de 24h, média de 30 dias, crescimento mensal e a previsão de saturação, com as tags circuit,
       segment, link, interface e alias. Os problemas trazem um link para o circuito no módulo.
+      Nos backbones descobre também as interfaces com IP /30 ou /31 (tag link=p2p): são a ponta do core dos
+      enlaces com as distribuições, que o módulo acha pelos endereços (item capacity.ip.p2p), sem LLDP/CDP.
       O módulo "Network Topology" usa essas tags para montar o caminho de cada circuito e apontar o gargalo.
 
       Opcional: com {$CAPACITY.NETBOX.URL} preenchido, interfaces sem CID na descrição buscam o CID
@@ -30,19 +35,251 @@ zabbix_export:
       onde veio o CID de cada interface: descricao, netbox ou macro.
     vendor:
       name: nettopo
-      version: 1.5.1
+      version: 1.6.0
     groups:
     - name: Templates/Capacity Planning
     items:
     - uuid: a5833aedc6c5469f9137e47da996c3a1
       name: 'Capacidade: interfaces (walk)'
       type: SNMP_AGENT
-      snmp_oid: walk[1.3.6.1.2.1.31.1.1.1.1,1.3.6.1.2.1.31.1.1.1.18,1.3.6.1.2.1.31.1.1.1.15,1.3.6.1.2.1.2.2.1.2,1.3.6.1.2.1.1.5]
+      snmp_oid: walk[1.3.6.1.2.1.31.1.1.1.1,1.3.6.1.2.1.31.1.1.1.18,1.3.6.1.2.1.31.1.1.1.15,1.3.6.1.2.1.2.2.1.2,1.3.6.1.2.1.1.5,1.3.6.1.2.1.4.20.1.2,1.3.6.1.2.1.4.20.1.3]
       key: capacity.if.walk
       delay: '{$CAPACITY.LLD.INTERVAL}'
       history: '0'
       value_type: TEXT
-      description: 'ifName, ifAlias, ifHighSpeed, ifDescr e sysName. Não é guardado: alimenta a descoberta.'
+      description: 'ifName, ifAlias, ifHighSpeed, ifDescr, sysName e os endereços IPv4 (IP-MIB). Não é guardado: alimenta a descoberta.'
+      tags:
+      - tag: component
+        value: capacity
+    - uuid: 95a5b5ac24084e76b23d1c88ec4ce8d5
+      name: 'Capacidade: endereços ponto a ponto'
+      type: DEPENDENT
+      key: capacity.ip.p2p
+      delay: '0'
+      history: 1d
+      value_type: TEXT
+      description: 'Endereços IPv4 /30 e /31 do equipamento e a interface de cada um (IP-MIB). O módulo liga duas interfaces de equipamentos diferentes que estão no mesmo /30 ou /31: descobre quem liga em quem sem LLDP/CDP.'
+      preprocessing:
+      - type: JAVASCRIPT
+        parameters:
+        - |
+          // Capacity Planning - point-to-point IPv4 addresses of the device, for finding neighbors without LLDP/CDP.
+          // Zabbix JavaScript preprocessing (Duktape, ES5 only).
+          // Input: walk[] text with IF-MIB ifName/ifDescr and IP-MIB ipAdEntIfIndex/ipAdEntNetMask.
+          // Output: JSON list [[address, prefix length, interface name], ...] of the addresses whose mask is
+          // /{$CAPACITY.P2P.PREFIX} or longer (default 30: /30 and /31), sorted. Two interfaces of two devices in the same
+          // /30 or /31 are the two ends of one link: the module "Network Topology" pairs them.
+          var PREFIX_MIN = parseInt(cfg('{$CAPACITY.P2P.PREFIX}', '30'), 10);
+
+          var OID_IFNAME = '1.3.6.1.2.1.31.1.1.1.1.';
+          var OID_IFDESCR = '1.3.6.1.2.1.2.2.1.2.';
+          var OID_IPIFINDEX = '1.3.6.1.2.1.4.20.1.2.';
+          var OID_IPMASK = '1.3.6.1.2.1.4.20.1.3.';
+
+          if (isNaN(PREFIX_MIN) || PREFIX_MIN < 24 || PREFIX_MIN > 31) {
+              PREFIX_MIN = 30;
+          }
+
+          function cfg(value, fallback) {
+              return (value.indexOf('{$') === 0) ? fallback : value;
+          }
+
+          function unescapeQuoted(s) {
+              return s.replace(/\\(.)/g, '$1');
+          }
+
+          function parseWalk(text) {
+              var out = {}, i = 0, n = text.length, c, s, oid, m, type, val, e, nl;
+
+              while (i < n) {
+                  c = text.charAt(i);
+                  if (c === '\n' || c === '\r' || c === ' ' || c === '\t') {
+                      i++;
+                      continue;
+                  }
+
+                  s = i;
+                  while (i < n && '0123456789.'.indexOf(text.charAt(i)) !== -1) {
+                      i++;
+                  }
+                  oid = text.substring(s, i);
+                  while (i < n && text.charAt(i) === ' ') {
+                      i++;
+                  }
+
+                  if (oid === '' || text.charAt(i) !== '=') {
+                      nl = text.indexOf('\n', i);
+                      i = nl < 0 ? n : nl + 1;
+                      continue;
+                  }
+
+                  if (oid.charAt(0) === '.') {
+                      oid = oid.substring(1);
+                  }
+
+                  i++;
+                  while (i < n && text.charAt(i) === ' ') {
+                      i++;
+                  }
+
+                  type = '';
+                  m = /^([A-Za-z][A-Za-z0-9\-]*):/.exec(text.substring(i, i + 40));
+                  if (m) {
+                      type = m[1];
+                      i += m[0].length;
+                      while (i < n && text.charAt(i) === ' ') {
+                          i++;
+                      }
+                  }
+
+                  if (text.charAt(i) === '"') {
+                      e = i + 1;
+                      while (e < n) {
+                          c = text.charAt(e);
+                          if (c === '\\') {
+                              e += 2;
+                              continue;
+                          }
+                          if (c === '"') {
+                              break;
+                          }
+                          e++;
+                      }
+                      val = unescapeQuoted(text.substring(i + 1, e));
+                      nl = text.indexOf('\n', e);
+                      i = nl < 0 ? n : nl + 1;
+                  }
+                  else if (type === 'Hex-STRING') {
+                      e = i;
+                      while (true) {
+                          nl = text.indexOf('\n', e);
+                          if (nl < 0) {
+                              e = n;
+                              break;
+                          }
+                          if (text.charAt(nl + 1) === '.' || /^[0-9]+(\.[0-9]+)+ *=/.test(text.substring(nl + 1, nl + 200))) {
+                              e = nl;
+                              break;
+                          }
+                          e = nl + 1;
+                      }
+                      val = hexToText(text.substring(i, e));
+                      i = e + 1;
+                  }
+                  else {
+                      nl = text.indexOf('\n', i);
+                      e = nl < 0 ? n : nl;
+                      val = text.substring(i, e).replace(/\s+$/, '');
+                      i = e + 1;
+                  }
+
+                  out[oid] = val;
+              }
+
+              return out;
+          }
+
+          // Descriptions with accents come as Hex-STRING (UTF-8 bytes).
+          function hexToText(v) {
+              var parts = v.replace(/\s+/g, ' ').replace(/^ +| +$/g, '').split(' '), bytes = [], r = '', k, b, b2, b3;
+
+              for (k = 0; k < parts.length; k++) {
+                  if (/^[0-9A-Fa-f]{2}$/.test(parts[k])) {
+                      bytes.push(parseInt(parts[k], 16));
+                  }
+              }
+
+              for (k = 0; k < bytes.length; k++) {
+                  b = bytes[k];
+                  if (b === 0) {
+                      continue;
+                  }
+                  if (b < 0x80) {
+                      r += String.fromCharCode(b);
+                  }
+                  else if ((b & 0xE0) === 0xC0 && k + 1 < bytes.length) {
+                      b2 = bytes[++k];
+                      r += String.fromCharCode(((b & 0x1F) << 6) | (b2 & 0x3F));
+                  }
+                  else if ((b & 0xF0) === 0xE0 && k + 2 < bytes.length) {
+                      b2 = bytes[++k];
+                      b3 = bytes[++k];
+                      r += String.fromCharCode(((b & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
+                  }
+                  else {
+                      r += String.fromCharCode(b);
+                  }
+              }
+
+              return r;
+          }
+
+          // "255.255.255.252" -> 30; -1 when not a contiguous mask.
+          function prefixLength(mask) {
+              var parts = String(mask).replace(/^"|"$/g, '').split('.'), bits = '', k, b;
+
+              if (parts.length !== 4) {
+                  return -1;
+              }
+
+              for (k = 0; k < 4; k++) {
+                  b = parseInt(parts[k], 10);
+                  if (isNaN(b) || b < 0 || b > 255) {
+                      return -1;
+                  }
+                  bits += ('00000000' + b.toString(2)).slice(-8);
+              }
+
+              return /^1*0*$/.test(bits) ? bits.indexOf('0') < 0 ? 32 : bits.indexOf('0') : -1;
+          }
+
+          var walk = parseWalk(value);
+          var result = [], oid, ip, idx, prefix, name, first;
+
+          for (oid in walk) {
+              if (!walk.hasOwnProperty(oid) || oid.indexOf(OID_IPIFINDEX) !== 0) {
+                  continue;
+              }
+
+              ip = oid.substring(OID_IPIFINDEX.length);
+
+              if (!/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(ip)) {
+                  continue;
+              }
+
+              first = parseInt(ip.split('.')[0], 10);
+
+              // Loopback and "this network" are never links.
+              if (first === 127 || first === 0) {
+                  continue;
+              }
+
+              prefix = prefixLength(walk[OID_IPMASK + ip] || '');
+
+              if (prefix < PREFIX_MIN || prefix > 31) {
+                  continue;
+              }
+
+              idx = String(walk[oid]).replace(/[^0-9]/g, '');
+              name = walk[OID_IFNAME + idx] || walk[OID_IFDESCR + idx] || '';
+
+              if (idx === '' || name === '') {
+                  continue;
+              }
+
+              result.push([ip, prefix, name]);
+          }
+
+          result.sort(function(a, b) {
+              return a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0);
+          });
+
+          return JSON.stringify(result);
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 6h
+      master_item:
+        key: capacity.if.walk
       tags:
       - tag: component
         value: capacity
@@ -53,13 +290,14 @@ zabbix_export:
       delay: '0'
       history: 7d
       value_type: CHAR
-      description: Backbone, Distribuição ou CPE ({$CAPACITY.SEGMENT}, definido pelo template de perfil).
+      description: Backbone, Distribuição ou CPE quando {$CAPACITY.SEGMENT} está definido (perfil ou host); "Automático" quando a descoberta acha o papel pelos dados.
       preprocessing:
       - type: JAVASCRIPT
         parameters:
         - |
           // Role of the device for capacity planning.
-          var v = String('{$CAPACITY.SEGMENT}').toLowerCase()
+          var raw = String('{$CAPACITY.SEGMENT}');
+          var v = raw.toLowerCase()
               .replace(/[à-å]/g, 'a').replace(/ç/g, 'c').replace(/[è-ë]/g, 'e')
               .replace(/[ì-ï]/g, 'i').replace(/[ò-ö]/g, 'o').replace(/[ù-ü]/g, 'u');
 
@@ -71,6 +309,11 @@ zabbix_export:
           }
           if (/^(cpe|acesso|access|cliente|customer)$/.test(v)) {
               return 'CPE';
+          }
+
+          // Empty (or "auto"): the discovery finds the role from the data (core trunks, number of circuits).
+          if (raw === '' || raw.indexOf('{$') === 0 || /^(auto|automatico)$/.test(v)) {
+              return 'Automático';
           }
 
           return 'Indefinido';
@@ -314,13 +557,13 @@ zabbix_export:
         params: percentile(//capacity.if.util[{#SNMPINDEX}],{$CAPACITY.P95.PERIOD},95)
         trigger_prototypes:
         - uuid: 01ab48325da445be919b7146cd62d750
-          expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>={$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}
-          name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de {$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}%'
+          expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>=(({$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}=0)*{#UTIL_CRIT}+{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})
+          name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima do limite crítico'
           opdata: 'p95: {ITEM.LASTVALUE1}'
           url: zabbix.php?action=nettopo.capacity&hostid={HOST.ID}&snmpindex={#SNMPINDEX}
           url_name: 'Planejamento de capacidade: {#CIRCUIT_LABEL}'
           priority: HIGH
-          description: 'O p95 de utilização passou do limite crítico do papel do equipamento. Limite por circuito: {$CAPACITY.UTIL.CRIT:"CIRCUIT_ID"}.'
+          description: 'O p95 de utilização passou do limite crítico: o do papel do equipamento ({#SEGMENT_LABEL}: {#UTIL_CRIT}%), ou {$CAPACITY.UTIL.CRIT} quando definido (por circuito: {$CAPACITY.UTIL.CRIT:"CIRCUIT_ID"}).'
           tags:
           - tag: capacity
             value: p95
@@ -335,16 +578,16 @@ zabbix_export:
           - tag: segment
             value: '{#SEGMENT}'
         - uuid: 20fc6061361e462a90a420702ce9ce14
-          expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>={$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"}
-          name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de {$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"}%'
+          expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>=(({$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"}=0)*{#UTIL_WARN}+{$CAPACITY.UTIL.WARN:"{#CIRCUIT_ID}"})
+          name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima do limite de atenção'
           opdata: 'p95: {ITEM.LASTVALUE1}'
           url: zabbix.php?action=nettopo.capacity&hostid={HOST.ID}&snmpindex={#SNMPINDEX}
           url_name: 'Planejamento de capacidade: {#CIRCUIT_LABEL}'
           priority: WARNING
-          description: O p95 de utilização passou do limite de atenção. Hora de planejar aumento.
+          description: 'O p95 de utilização passou do limite de atenção ({#SEGMENT_LABEL}: {#UTIL_WARN}%, ou {$CAPACITY.UTIL.WARN} quando definido). Hora de planejar aumento.'
           dependencies:
-          - name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima de {$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}%'
-            expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>={$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}
+          - name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) com p95 acima do limite crítico'
+            expression: last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])>=(({$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}=0)*{#UTIL_CRIT}+{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})
           tags:
           - tag: capacity
             value: p95
@@ -497,11 +740,11 @@ zabbix_export:
         trends: '0'
         value_type: FLOAT
         units: dias
-        params: ((last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//capacity.if.util.p95[{#SNMPINDEX}]))<{$CAPACITY.TREND.MIN})*3650+((last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//capacity.if.util.p95[{#SNMPINDEX}]))>={$CAPACITY.TREND.MIN})*((timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})/86400)<3650)*(timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})/86400)
+        params: ((last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//capacity.if.util.p95[{#SNMPINDEX}]))<{$CAPACITY.TREND.MIN})*3650+((last(//capacity.if.util.forecast[{#SNMPINDEX}])-last(//capacity.if.util.p95[{#SNMPINDEX}]))>={$CAPACITY.TREND.MIN})*((({$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}=0)*timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{#UTIL_CRIT})/86400+({$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}>0)*timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})/86400)<3650)*(({$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}=0)*timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{#UTIL_CRIT})/86400+({$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}>0)*timeleft(//capacity.if.util.p95[{#SNMPINDEX}],{$CAPACITY.TREND.PERIOD},{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})/86400)
       trigger_prototypes:
       - uuid: 6c5e5ba1836942bdbf9d105d6861ca2a
-        expression: last(/Template Capacity Planning/capacity.if.days_left[{#SNMPINDEX}])>=0 and last(/Template Capacity Planning/capacity.if.days_left[{#SNMPINDEX}])<{$CAPACITY.FORECAST.DAYS} and last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])<{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}
-        name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) deve chegar a {$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}% em menos de {$CAPACITY.FORECAST.DAYS} dias'
+        expression: last(/Template Capacity Planning/capacity.if.days_left[{#SNMPINDEX}])>=0 and last(/Template Capacity Planning/capacity.if.days_left[{#SNMPINDEX}])<{$CAPACITY.FORECAST.DAYS} and last(/Template Capacity Planning/capacity.if.util.p95[{#SNMPINDEX}])<(({$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"}=0)*{#UTIL_CRIT}+{$CAPACITY.UTIL.CRIT:"{#CIRCUIT_ID}"})
+        name: 'Capacidade {#SEGMENT_LABEL}: {#IFNAME} ({#CIRCUIT_LABEL}) deve chegar ao limite crítico em menos de {$CAPACITY.FORECAST.DAYS} dias'
         opdata: Faltam {ITEM.LASTVALUE1}
         url: zabbix.php?action=nettopo.capacity&hostid={HOST.ID}&snmpindex={#SNMPINDEX}
         url_name: 'Planejamento de capacidade: {#CIRCUIT_LABEL}'
@@ -537,6 +780,13 @@ zabbix_export:
           //     ({$CAPACITY.SHARED.FIELDS}=CORE matches "name|CORE|100G|...").
           // The capacity written in a "|"-separated description ("name|BORDER|200M|EVC_ID#1") is returned in {#BW_DESC}
           // (Mbps, 0 = none) and used as the capacity of the interface unless a {$CAPACITY.BW.MBPS} contract exists.
+          // Role of the device ({#SEGMENT}): {$CAPACITY.SEGMENT} when a profile template or the host sets it; otherwise it is
+          // found from the data: an interface with a whole field of {$CAPACITY.ROLE.BACKBONE.FIELDS} ("|CORE|") = backbone,
+          // {$CAPACITY.ROLE.DIST.MIN} or more circuits = distribution, fewer = CPE. {#UTIL_WARN}/{#UTIL_CRIT} are the limits
+          // of that role ({$CAPACITY.ROLE.WARN:"<role>"}, {$CAPACITY.ROLE.CRIT:"<role>"}).
+          // Point-to-point interfaces: on the roles in {$CAPACITY.P2P.ROLES} (default backbone), interfaces with a /30 or /31
+          // IPv4 address and no circuit are discovered too ({#LINK} = p2p): they are the core end of the links to the
+          // distribution devices, found by the module through the addresses (no LLDP/CDP needed).
           // Optional: when {$CAPACITY.NETBOX.URL} is set, interfaces without a CID in the description take it
           // from NetBox (custom field {$CAPACITY.NETBOX.FIELD} of the interface, or its description).
           // Optional: the host macro {$CIRCUIT_ID} gives the circuit of the whole device (usually a CPE); it goes to
@@ -545,9 +795,10 @@ zabbix_export:
           //
           // Zabbix replaces the user macros below before running the script.
           var SEGMENT = cfg('{$CAPACITY.SEGMENT}', '');
-          var CID_PREFIX = cfg('{$CAPACITY.CID.PREFIX}', 'CID');
+          var CID_PREFIX = cfg('{$CAPACITY.CID.PREFIX}', 'CID,EVC_ID,EID');
           var SHARED_WORDS = cfg('{$CAPACITY.SHARED.WORDS}', 'UPLINK,TRONCO,TRUNK');
-          var SHARED_FIELDS = cfg('{$CAPACITY.SHARED.FIELDS}', '');
+          var SHARED_FIELDS = cfg('{$CAPACITY.SHARED.FIELDS}', 'CORE');
+          var SHARED_EXCLUDE = cfg('{$CAPACITY.SHARED.EXCLUDE}', '');
           var BW_FROM_DESC = cfg('{$CAPACITY.BW.FROM.DESC}', '1') !== '0';
           var NETBOX_URL = cfg('{$CAPACITY.NETBOX.URL}', '');
           var NETBOX_TOKEN = cfg('{$CAPACITY.NETBOX.TOKEN}', '');
@@ -555,12 +806,25 @@ zabbix_export:
           var NETBOX_DEVICE = cfg('{$CAPACITY.NETBOX.DEVICE}', '');
           var HOST_CID = cfg('{$CIRCUIT_ID}', '');
           var HOST_CID_IF = cfg('{$CIRCUIT_ID.IF}', '');
+          var ROLE_BACKBONE_FIELDS = cfg('{$CAPACITY.ROLE.BACKBONE.FIELDS}', 'CORE');
+          var ROLE_DIST_MIN = parseInt(cfg('{$CAPACITY.ROLE.DIST.MIN}', '2'), 10);
+          var P2P_ROLES = cfg('{$CAPACITY.P2P.ROLES}', 'backbone');
+          var P2P_PREFIX = parseInt(cfg('{$CAPACITY.P2P.PREFIX}', '30'), 10);
+          // Utilization limits by role (%): attention and critical.
+          var ROLE_LIMITS = {
+              backbone: [cfg('{$CAPACITY.ROLE.WARN:"backbone"}', '60'), cfg('{$CAPACITY.ROLE.CRIT:"backbone"}', '80')],
+              distribuicao: [cfg('{$CAPACITY.ROLE.WARN:"distribuicao"}', '70'), cfg('{$CAPACITY.ROLE.CRIT:"distribuicao"}', '85')],
+              cpe: [cfg('{$CAPACITY.ROLE.WARN:"cpe"}', '80'), cfg('{$CAPACITY.ROLE.CRIT:"cpe"}', '95')],
+              indefinido: [cfg('{$CAPACITY.ROLE.WARN}', '70'), cfg('{$CAPACITY.ROLE.CRIT}', '90')]
+          };
 
           var OID_IFNAME = '1.3.6.1.2.1.31.1.1.1.1.';
           var OID_IFALIAS = '1.3.6.1.2.1.31.1.1.1.18.';
           var OID_IFHIGHSPEED = '1.3.6.1.2.1.31.1.1.1.15.';
           var OID_IFDESCR = '1.3.6.1.2.1.2.2.1.2.';
           var OID_SYSNAME = '1.3.6.1.2.1.1.5.0';
+          var OID_IPIFINDEX = '1.3.6.1.2.1.4.20.1.2.';
+          var OID_IPMASK = '1.3.6.1.2.1.4.20.1.3.';
 
           var SEGMENT_LABELS = {backbone: 'Backbone', distribuicao: 'Distribuição', cpe: 'CPE', indefinido: 'Indefinido'};
 
@@ -571,8 +835,18 @@ zabbix_export:
               '(?:\\s*[,;]\\s*(?![A-Za-z0-9._/-]+\\s*[:=#])' + ID + ')*)', 'i');
           var SHARED_RE = wordsRe(SHARED_WORDS);
           var SHARED_FIELD_LIST = fieldList(SHARED_FIELDS);
+          // Links left out of capacity planning (temporary, backup...): words or "|" fields of the description.
+          var SHARED_EXCLUDE_RE = wordsRe(SHARED_EXCLUDE);
           var HOST_CIDS = splitIds(HOST_CID);
           var HOST_CID_RE = HOST_CIDS.length ? namesRe(HOST_CID_IF) : null;
+          var ROLE_BACKBONE_LIST = fieldList(ROLE_BACKBONE_FIELDS);
+
+          if (isNaN(ROLE_DIST_MIN) || ROLE_DIST_MIN < 1) {
+              ROLE_DIST_MIN = 2;
+          }
+          if (isNaN(P2P_PREFIX) || P2P_PREFIX < 24 || P2P_PREFIX > 31) {
+              P2P_PREFIX = 30;
+          }
 
           function cfg(value, fallback) {
               var v = String(value).replace(/^\s+|\s+$/g, '');
@@ -661,26 +935,90 @@ zabbix_export:
           }
 
           function isShared(description) {
-              var fields, k, f, w;
+              if (isExcluded(description)) {
+                  return false;
+              }
 
               if (SHARED_RE !== null && SHARED_RE.test(description || '')) {
                   return true;
               }
 
-              if (SHARED_FIELD_LIST.length) {
-                  // Whole "|"-separated fields only: "name|CORE|100G" yes, "CORE-RJ-01_CORE-SP-01" no.
-                  fields = String(description || '').split('|');
-                  for (k = 0; k < fields.length; k++) {
-                      f = fields[k].replace(/^\s+|\s+$/g, '').toUpperCase();
-                      for (w = 0; w < SHARED_FIELD_LIST.length; w++) {
-                          if (f === SHARED_FIELD_LIST[w]) {
-                              return true;
-                          }
+              return hasField(description, SHARED_FIELD_LIST);
+          }
+
+          function isExcluded(description) {
+              return SHARED_EXCLUDE_RE !== null && SHARED_EXCLUDE_RE.test(description || '');
+          }
+
+          // Whole "|"-separated fields only: "name|CORE|100G" has CORE, "CORE-RJ-01_CORE-SP-01" has not.
+          function hasField(description, list) {
+              var fields, k, f, w;
+
+              if (!list.length) {
+                  return false;
+              }
+
+              fields = String(description || '').split('|');
+
+              for (k = 0; k < fields.length; k++) {
+                  f = fields[k].replace(/^\s+|\s+$/g, '').toUpperCase();
+                  for (w = 0; w < list.length; w++) {
+                      if (f === list[w]) {
+                          return true;
                       }
                   }
               }
 
               return false;
+          }
+
+          // "255.255.255.254" -> 31; -1 when not a contiguous mask.
+          function prefixLength(mask) {
+              var parts = String(mask).split('.'), bits = '', k, b;
+
+              if (parts.length !== 4) {
+                  return -1;
+              }
+
+              for (k = 0; k < 4; k++) {
+                  b = parseInt(parts[k], 10);
+                  if (isNaN(b) || b < 0 || b > 255) {
+                      return -1;
+                  }
+                  bits += ('00000000' + b.toString(2)).slice(-8);
+              }
+
+              if (!/^1*0*$/.test(bits)) {
+                  return -1;
+              }
+
+              return bits.indexOf('0') < 0 ? 32 : bits.indexOf('0');
+          }
+
+          // ifIndex => true for the interfaces with a point-to-point IPv4 address (/P2P_PREFIX to /31).
+          function pointToPoint(walk) {
+              var out = {}, oid, ip, prefix, first;
+
+              for (oid in walk) {
+                  if (!walk.hasOwnProperty(oid) || oid.indexOf(OID_IPIFINDEX) !== 0) {
+                      continue;
+                  }
+
+                  ip = oid.substring(OID_IPIFINDEX.length);
+                  first = parseInt(ip.split('.')[0], 10);
+
+                  if (first === 127 || first === 0) {
+                      continue;
+                  }
+
+                  prefix = prefixLength(walk[OID_IPMASK + ip] || '');
+
+                  if (prefix >= P2P_PREFIX && prefix <= 31) {
+                      out[String(walk[oid]).replace(/[^0-9]/g, '')] = true;
+                  }
+              }
+
+              return out;
           }
 
           // Capacity written as a whole "|"-separated field ("100M", "1G", "10 Gbps", "2,5G", or with a key: "B:1G",
@@ -923,7 +1261,9 @@ zabbix_export:
           }
 
           var walk = parseWalk(value);
+          // Role set by a profile template or by the host; 'indefinido' = find it from the data (below).
           var segment = normalizeSegment(SEGMENT);
+          var p2p = pointToPoint(walk);
           var indexes = [], seen = {}, oid, idx, k;
 
           for (oid in walk) {
@@ -955,7 +1295,27 @@ zabbix_export:
               netbox = netboxInterfaces(NETBOX_DEVICE !== '' ? NETBOX_DEVICE : (walk[OID_SYSNAME] || ''));
           }
 
-          var rows = [];
+          var rows = [], candidates = [], circuits = {}, backbone_field = false, c;
+
+          function makeRow(idx, name, alias, cids, link, source) {
+              var speed = parseInt(walk[OID_IFHIGHSPEED + idx] || '0', 10);
+
+              return {
+                  '{#SNMPINDEX}': idx,
+                  '{#IFNAME}': name,
+                  '{#IFALIAS}': alias,
+                  '{#IFSPEED}': String(isNaN(speed) ? 0 : speed),
+                  // Capacity written in the description (Mbps, 0 = none): see bandwidthFrom().
+                  '{#BW_DESC}': String(bandwidthFrom(alias)),
+                  '{#CIRCUIT_ID}': cids.length ? cids[0] : '',
+                  // Context of {$CAPACITY.BW.MBPS}: the (first) circuit ID, or the interface name for links.
+                  '{#BW_KEY}': cids.length ? cids[0] : name,
+                  '{#CIRCUITS}': cids.join(','),
+                  '{#CIRCUIT_LABEL}': cids.length ? cids.join(',') : (link === 'p2p' ? 'ponto a ponto' : 'compartilhado'),
+                  '{#LINK}': link,
+                  '{#CID_SOURCE}': source
+              };
+          }
 
           for (k = 0; k < indexes.length; k++) {
               idx = indexes[k];
@@ -983,30 +1343,53 @@ zabbix_export:
                   source = 'macro';
               }
 
+              if (hasField(alias, ROLE_BACKBONE_LIST)) {
+                  backbone_field = true;
+              }
+
               if (!cids.length && !shared) {
+                  // Not a circuit: kept aside in case the device turns out to be a role with point-to-point discovery.
+                  if (p2p[idx] && !isExcluded(alias)) {
+                      candidates.push(makeRow(idx, name, alias, [], 'p2p', ''));
+                  }
                   continue;
               }
 
-              var speed = parseInt(walk[OID_IFHIGHSPEED + idx] || '0', 10);
+              for (c = 0; c < cids.length; c++) {
+                  circuits[cids[c]] = true;
+              }
 
-              rows.push({
-                  '{#SNMPINDEX}': idx,
-                  '{#IFNAME}': name,
-                  '{#IFALIAS}': alias,
-                  '{#IFSPEED}': String(isNaN(speed) ? 0 : speed),
-                  // Capacity written in the description (Mbps, 0 = none): see bandwidthFrom().
-                  '{#BW_DESC}': String(bandwidthFrom(alias)),
-                  '{#CIRCUIT_ID}': cids.length ? cids[0] : '',
-                  // Context of {$CAPACITY.BW.MBPS}: the (first) circuit ID, or the interface name for shared links.
-                  '{#BW_KEY}': cids.length ? cids[0] : name,
-                  '{#CIRCUITS}': cids.join(','),
-                  '{#CIRCUIT_LABEL}': cids.length ? cids.join(',') : 'compartilhado',
-                  '{#LINK}': shared ? 'compartilhado' : 'dedicado',
-                  '{#SEGMENT}': segment,
-                  '{#SEGMENT_LABEL}': SEGMENT_LABELS[segment],
-                  '{#CID_SOURCE}': source
-              });
+              rows.push(makeRow(idx, name, alias, cids, shared ? 'compartilhado' : 'dedicado', source));
           }
+
+          // Role from the data when no profile template or host macro sets it: the device that has core trunks is
+          // backbone; the one that gathers several circuits is distribution; the one with fewer is the CPE.
+          if (segment === 'indefinido') {
+              var count = 0;
+
+              for (c in circuits) {
+                  if (circuits.hasOwnProperty(c)) {
+                      count++;
+                  }
+              }
+
+              segment = backbone_field ? 'backbone' : (count >= ROLE_DIST_MIN ? 'distribuicao' : (count > 0 ? 'cpe' : 'indefinido'));
+          }
+
+          if (candidates.length && hasField(segment, fieldList(P2P_ROLES))) {
+              rows = rows.concat(candidates);
+          }
+
+          for (k = 0; k < rows.length; k++) {
+              rows[k]['{#SEGMENT}'] = segment;
+              rows[k]['{#SEGMENT_LABEL}'] = SEGMENT_LABELS[segment];
+              rows[k]['{#UTIL_WARN}'] = ROLE_LIMITS[segment][0];
+              rows[k]['{#UTIL_CRIT}'] = ROLE_LIMITS[segment][1];
+          }
+
+          rows.sort(function(a, b) {
+              return parseInt(a['{#SNMPINDEX}'], 10) - parseInt(b['{#SNMPINDEX}'], 10);
+          });
 
           return JSON.stringify(rows);
       - type: DISCARD_UNCHANGED_HEARTBEAT
@@ -1060,12 +1443,51 @@ zabbix_export:
     - macro: '{$CAPACITY.NETBOX.URL}'
       value: ''
       description: 'Opcional: URL do NetBox (ex.: https://netbox.exemplo). Vazio = só a descrição da interface.'
+    - macro: '{$CAPACITY.P2P.PREFIX}'
+      value: '30'
+      description: 'Máscara mínima de um enlace ponto a ponto: 30 = /30 e /31; 31 = só /31.'
+    - macro: '{$CAPACITY.P2P.ROLES}'
+      value: backbone
+      description: Papéis em que as interfaces com IP ponto a ponto (sem circuito) também são descobertas, separados por vírgula (backbone, distribuicao, cpe). No backbone elas são a ponta do core dos enlaces com as distribuições.
     - macro: '{$CAPACITY.P95.PERIOD}'
       value: 7d
       description: Janela do percentil 95.
+    - macro: '{$CAPACITY.ROLE.BACKBONE.FIELDS}'
+      value: CORE
+      description: 'Papel automático: o equipamento com uma interface com um destes campos inteiros na descrição ("nome|CORE|100G|...") é backbone.'
+    - macro: '{$CAPACITY.ROLE.CRIT}'
+      value: '90'
+      description: Limite crítico (%) de um equipamento sem papel.
+    - macro: '{$CAPACITY.ROLE.CRIT:"backbone"}'
+      value: '80'
+      description: Limite crítico (%) do backbone.
+    - macro: '{$CAPACITY.ROLE.CRIT:"cpe"}'
+      value: '95'
+      description: Limite crítico (%) do CPE.
+    - macro: '{$CAPACITY.ROLE.CRIT:"distribuicao"}'
+      value: '85'
+      description: Limite crítico (%) da distribuição.
+    - macro: '{$CAPACITY.ROLE.DIST.MIN}'
+      value: '2'
+      description: 'Papel automático: com este número de circuitos ou mais (e sem tronco CORE) o equipamento é distribuição; com menos, CPE.'
+    - macro: '{$CAPACITY.ROLE.WARN}'
+      value: '70'
+      description: Limite de atenção (%) de um equipamento sem papel.
+    - macro: '{$CAPACITY.ROLE.WARN:"backbone"}'
+      value: '60'
+      description: Limite de atenção (%) do backbone.
+    - macro: '{$CAPACITY.ROLE.WARN:"cpe"}'
+      value: '80'
+      description: Limite de atenção (%) do CPE.
+    - macro: '{$CAPACITY.ROLE.WARN:"distribuicao"}'
+      value: '70'
+      description: Limite de atenção (%) da distribuição.
     - macro: '{$CAPACITY.SEGMENT}'
       value: ''
-      description: 'Papel do equipamento: backbone, distribuicao ou cpe (definido pelo template de perfil).'
+      description: 'Papel do equipamento: backbone, distribuicao ou cpe. Vazio = automático (pelos dados). Os perfis definem; no host, corrige uma exceção.'
+    - macro: '{$CAPACITY.SHARED.EXCLUDE}'
+      value: ''
+      description: 'Palavras que tiram um enlace do capacity planning (ex.: TEMPORARIO,BACKUP): ele não entra como tronco, uplink nem ponto a ponto. Vale como macro global para a rede toda.'
     - macro: '{$CAPACITY.SHARED.FIELDS}'
       value: CORE
       description: 'Campos inteiros (separados por "|") que marcam um enlace compartilhado: "nome|CORE|100G|operadora" é compartilhado, "CORE-RJ-01_CORE-SP-01" não.'
@@ -1079,11 +1501,11 @@ zabbix_export:
       value: 30d
       description: Janela da tendência usada na previsão.
     - macro: '{$CAPACITY.UTIL.CRIT}'
-      value: '90'
-      description: Limite crítico de utilização (%). Os perfis mudam o padrão; contexto por circuito aceito.
+      value: '0'
+      description: 'Limite crítico de utilização (%). 0 = o do papel ({$CAPACITY.ROLE.CRIT:"<papel>"}). Contexto por circuito aceito: {$CAPACITY.UTIL.CRIT:"NET-TO-0001"}=90.'
     - macro: '{$CAPACITY.UTIL.WARN}'
-      value: '70'
-      description: Limite de atenção de utilização (%). Os perfis mudam o padrão; contexto por circuito aceito.
+      value: '0'
+      description: 'Limite de atenção de utilização (%). 0 = o do papel ({$CAPACITY.ROLE.WARN:"<papel>"}). Contexto por circuito aceito: {$CAPACITY.UTIL.WARN:"NET-TO-0001"}=80.'
     - macro: '{$CIRCUIT_ID}'
       value: ''
       description: 'Opcional, no host: circuito(s) do equipamento inteiro (ex.: NET-RJ-0005), para CPEs sem CID na descrição da interface. Vai para as interfaces escolhidas por {$CIRCUIT_ID.IF}.'
@@ -1115,11 +1537,12 @@ zabbix_export:
       Capacity planning - camada 2 (perfil Backbone).
       Roteadores core, enlaces troncais e interfaces de backbone. Limites mais baixos: o backbone precisa de folga para absorver a queda de um tronco.
 
-      Vincule este template aos equipamentos desse papel. Ele inclui o template base e define
-      {$CAPACITY.SEGMENT}=backbone e os limites de utilização do papel (atenção 60%, crítico 80%).
+      Opcional: o template base acha o papel sozinho. Use este perfil só para forçar o papel de um
+      equipamento que a regra automática classifica errado. Ele inclui o template base e define
+      {$CAPACITY.SEGMENT}=backbone (limites do papel: atenção 60%, crítico 80%).
     vendor:
       name: nettopo
-      version: 1.5.1
+      version: 1.6.0
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1135,12 +1558,6 @@ zabbix_export:
     - macro: '{$CAPACITY.SEGMENT}'
       value: backbone
       description: Papel do equipamento.
-    - macro: '{$CAPACITY.UTIL.CRIT}'
-      value: '80'
-      description: Limite crítico do papel (%).
-    - macro: '{$CAPACITY.UTIL.WARN}'
-      value: '60'
-      description: Limite de atenção do papel (%).
   - uuid: 2ae94abb72174484a794836c1863fccd
     template: Template Capacity Planning - Distribuicao
     name: Template Capacity Planning - Distribuicao
@@ -1148,11 +1565,12 @@ zabbix_export:
       Capacity planning - camada 2 (perfil Distribuicao).
       Switches/roteadores de agregação, equipamentos metro e distribuição regional.
 
-      Vincule este template aos equipamentos desse papel. Ele inclui o template base e define
-      {$CAPACITY.SEGMENT}=distribuicao e os limites de utilização do papel (atenção 70%, crítico 85%).
+      Opcional: o template base acha o papel sozinho. Use este perfil só para forçar o papel de um
+      equipamento que a regra automática classifica errado. Ele inclui o template base e define
+      {$CAPACITY.SEGMENT}=distribuicao (limites do papel: atenção 70%, crítico 85%).
     vendor:
       name: nettopo
-      version: 1.5.1
+      version: 1.6.0
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1168,12 +1586,6 @@ zabbix_export:
     - macro: '{$CAPACITY.SEGMENT}'
       value: distribuicao
       description: Papel do equipamento.
-    - macro: '{$CAPACITY.UTIL.CRIT}'
-      value: '85'
-      description: Limite crítico do papel (%).
-    - macro: '{$CAPACITY.UTIL.WARN}'
-      value: '70'
-      description: Limite de atenção do papel (%).
   - uuid: dc5718c25fe6453a9d78a4d29656dda1
     template: Template Capacity Planning - CPE
     name: Template Capacity Planning - CPE
@@ -1181,11 +1593,12 @@ zabbix_export:
       Capacity planning - camada 2 (perfil CPE).
       CPE do cliente e interfaces de última milha (normalmente limitadas pela banda contratada).
 
-      Vincule este template aos equipamentos desse papel. Ele inclui o template base e define
-      {$CAPACITY.SEGMENT}=cpe e os limites de utilização do papel (atenção 80%, crítico 95%).
+      Opcional: o template base acha o papel sozinho. Use este perfil só para forçar o papel de um
+      equipamento que a regra automática classifica errado. Ele inclui o template base e define
+      {$CAPACITY.SEGMENT}=cpe (limites do papel: atenção 80%, crítico 95%).
     vendor:
       name: nettopo
-      version: 1.5.1
+      version: 1.6.0
     templates:
     - name: Template Capacity Planning
     groups:
@@ -1201,9 +1614,3 @@ zabbix_export:
     - macro: '{$CAPACITY.SEGMENT}'
       value: cpe
       description: Papel do equipamento.
-    - macro: '{$CAPACITY.UTIL.CRIT}'
-      value: '95'
-      description: Limite crítico do papel (%).
-    - macro: '{$CAPACITY.UTIL.WARN}'
-      value: '80'
-      description: Limite de atenção do papel (%).
