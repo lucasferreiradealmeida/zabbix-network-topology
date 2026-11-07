@@ -446,6 +446,8 @@ def capacity_base_template():
             'segment, link, interface e alias. Os problemas trazem um link para o circuito no módulo.\n'
             'Nos backbones descobre também as interfaces com IP /30 ou /31 (tag link=p2p): são a ponta do core dos\n'
             'enlaces com as distribuições, que o módulo acha pelos endereços (item capacity.ip.p2p), sem LLDP/CDP.\n'
+            'Opcional, como macro global (Administração > Macros): {$CAPACITY.SHARED.EXCLUDE}=TEMPORARIO,BACKUP tira da\n'
+            'conta os enlaces com essas palavras na descrição (não entram como tronco, uplink nem ponto a ponto).\n'
             'O módulo "Network Topology" usa essas tags para montar o caminho de cada circuito e apontar o gargalo.\n\n'
             'Opcional: com {$CAPACITY.NETBOX.URL} preenchido, interfaces sem CID na descrição buscam o CID\n'
             'no NetBox (campo personalizado {$CAPACITY.NETBOX.FIELD} da interface ou a descrição dela).\n\n'
@@ -612,9 +614,6 @@ def capacity_base_template():
             {'macro': '{$CAPACITY.SEGMENT}', 'value': '',
              'description': 'Papel do equipamento: backbone, distribuicao ou cpe. Vazio = automático (pelos dados). '
                             'Os perfis definem; no host, corrige uma exceção.'},
-            {'macro': '{$CAPACITY.SHARED.EXCLUDE}', 'value': '',
-             'description': 'Palavras que tiram um enlace do capacity planning (ex.: TEMPORARIO,BACKUP): ele não '
-                            'entra como tronco, uplink nem ponto a ponto. Vale como macro global para a rede toda.'},
             {'macro': '{$CAPACITY.SHARED.FIELDS}', 'value': 'CORE',
              'description': 'Campos inteiros (separados por "|") que marcam um enlace compartilhado: '
                             '"nome|CORE|100G|operadora" é compartilhado, "CORE-RJ-01_CORE-SP-01" não.'},

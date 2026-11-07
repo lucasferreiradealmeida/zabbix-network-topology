@@ -18,7 +18,8 @@
     depender da velocidade da Vlanif da distribuição (que costuma ser falsa). Uma `p2p` que liga a outro core é
     tronco; uma que não liga a nada (peering) fica de fora.
   - Distribuição sem uplink marcado: os links do próprio equipamento (o IP da Vlanif) dizem qual core ela usa.
-- `{$CAPACITY.SHARED.EXCLUDE}`: palavras que tiram um enlace da conta (ex.: `TEMPORARIO,BACKUP`).
+- `{$CAPACITY.SHARED.EXCLUDE}` (macro global, não vem no template): palavras que tiram um enlace da conta (ex.:
+  `TEMPORARIO,BACKUP`).
 - Textos "achado pelo LLDP/CDP" viram "achado pelos vizinhos" (vale para qualquer fonte de link).
 - Importe de novo `templates/capacity_planning.yaml` **e** atualize o módulo.
 

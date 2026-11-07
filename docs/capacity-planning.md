@@ -479,7 +479,7 @@ no caminho; uma que liga a outro core vira tronco.
 | `{$CAPACITY.SEGMENT}` no host (ou um perfil) | Corrigir o papel de um equipamento que a regra classifica errado (ex.: um CPE com 2 circuitos). |
 | `{$CAPACITY.ROLE.DIST.MIN}` | Quantos circuitos fazem de um equipamento uma distribuição (padrão 2). |
 | `{$CAPACITY.ROLE.BACKBONE.FIELDS}` | Campos da descrição que indicam tronco de backbone (padrão `CORE`). |
-| `{$CAPACITY.SHARED.EXCLUDE}` | Palavras que tiram um enlace da conta, como `TEMPORARIO,BACKUP`. |
+| `{$CAPACITY.SHARED.EXCLUDE}` (macro **global**, não vem no template) | Palavras que tiram um enlace da conta, como `TEMPORARIO,BACKUP`. |
 | `{$CAPACITY.P2P.ROLES}` | Papéis em que as interfaces /30 e /31 são descobertas (padrão `backbone`). |
 | `{$CAPACITY.ROLE.WARN:"<papel>"}`, `{$CAPACITY.ROLE.CRIT:"<papel>"}` | Limites de atenção e crítico de cada papel (backbone 60/80, distribuição 70/85, CPE 80/95). |
 
